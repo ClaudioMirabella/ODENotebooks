@@ -1,0 +1,14 @@
+# Build tools of the student site (python -m venv .venv; .venv/Scripts/pip install -r requirements-site.txt)
+# Pinned: the site is rebuilt from these exact versions.
+jupyterlite-core==0.8.7
+jupyterlite-pyodide-kernel==0.8.7
+ipywidgets==8.1.9
+jupyterlab_widgets==3.0.17
+# jupyter-server lets JupyterLite add the notebooks to the site.
+jupyter-server==2.21.1
+# numpy, scipy and pytest run the tests of odelib before a build.
+numpy==2.5.5
+scipy==1.18.1
+pytest==9.2.0
+# check_site.py drives a browser already installed (Edge or Chrome); no browser is downloaded.
+playwright==1.56.0

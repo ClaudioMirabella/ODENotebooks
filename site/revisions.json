@@ -1,0 +1,14 @@
+{
+  "how to use": [
+    "A browser that has run a notebook keeps its own copy and goes on showing it, also after the",
+    "notebook on the site has been corrected. To make a correction reach every student, give the",
+    "notebook a higher revision here and build the site again: it is then published under a new",
+    "file name (..._r2.ipynb), every link to it is updated, and the home page says what changed.",
+    "The student's earlier copy, with the answers typed in it, stays in the browser under the old name.",
+    "Do this only for corrections that matter (a wrong formula, a broken exercise): the corrected",
+    "notebook opens clean, without the answers the student had typed.",
+    "Example of an entry of \"notebooks\" (the key is the first part of the file name):",
+    "    \"10\": {\"revision\": 2, \"date\": \"2027-02-03\", \"note\": \"Exercise 2(b): the sign of the answer was wrong.\"}"
+  ],
+  "notebooks": {}
+}

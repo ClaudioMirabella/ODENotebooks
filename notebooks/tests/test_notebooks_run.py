@@ -1,0 +1,740 @@
+"""Every numbered notebook runs from top to bottom without errors.
+
+Each notebook is executed in a fresh kernel, as a student would with "Run All Cells": as it is,
+with right answers, with wrong answers, and with the slider functions at the ends of their
+sliders. That is about a hundred executions of a few seconds each, so they are run **in
+parallel** before the first test (see ``_run_everything_first``): about a minute and a half in
+all, where one after the other they took more than seven minutes. Skipped where the notebook
+tools are not installed (the site's build environment only tests odelib).
+
+Run from the ode/notebooks folder:  python -m pytest tests/test_notebooks_run.py
+One notebook only:                  python -m pytest tests/test_notebooks_run.py -k 16
+One after the other, as before:     set NOTEBOOK_TEST_WORKERS=1 first
+"""
+
+import concurrent.futures
+import copy
+import json
+import os
+import pathlib
+import re
+import sys
+
+import pytest
+
+nbformat = pytest.importorskip("nbformat")
+nbclient = pytest.importorskip("nbclient")
+for _module in ("ipykernel", "sympy", "matplotlib", "scipy", "ipywidgets"):
+    pytest.importorskip(_module)
+
+NOTEBOOKS = pathlib.Path(__file__).resolve().parent.parent
+PATTERN = "[0-9][0-9]*_*.ipynb"             # the same allow-list as the student site (02_..., 02E_...)
+TIMEOUT_SECONDS = 600
+PATHS = sorted(NOTEBOOKS.glob(PATTERN))
+
+FILL_IN = "    return None                 # replace None with the formula"
+
+# The exercises of the notebooks built from plans/make_NN.py. For each notebook:
+#   answers   what a student types (placeholder -> a correct answer)
+#   solved    the lines the notebook must then print
+#   unsolved  the lines it prints when the exercises are untouched (and nothing stops)
+#   wrong     wrong answers (placeholder -> answer) and the line they must produce
+NAME_14 = "14_Nonhomogeneous_Equations.ipynb"
+U_DERIVATIVES = "    return -y2 * f / wronskian_of(y1, y2), y1 * f / wronskian_of(y1, y2)"
+NAME_15 = "15_Forced_Vibrations.ipynb"
+NAME_16 = "16_Higher_Order_BVP.ipynb"
+EXERCISES = {
+    NAME_16: {
+        "answers": {
+            "my_value_at_1 = None": "my_value_at_1 = 0",
+            "my_constants = None": "my_constants = 5",
+            "my_polynomials = None": "my_polynomials = 4",
+            "my_numbers_of_solutions = None": "my_numbers_of_solutions = [np.inf, 0, 1]",
+            "my_roots = None": "my_roots = [0, 0, 2, 3]",
+            "my_coefficients = None": "my_coefficients = [1, -3, 4, -12]",
+            "my_x = None": "my_x = -sp.sin(t)",
+            "my_y = None": "my_y = sp.sqrt(1 - x ** 2)",
+            FILL_IN: "    return 5 * w0 * L ** 4 / (384 * EI)",
+        },
+        "solved": ("Exercise 1, y(1): correct", "Exercise 1, constants: correct", "Exercise 1, polynomials: correct",
+                   "Exercise 1, numbers of solutions: correct", "Exercise 2a: correct", "Exercise 2b: correct",
+                   "Exercise 2c: correct", "Exercise 2d: correct", "Exercise 3: correct on all 3 beams",
+                   "The steel beam goes down 9.6 mm at mid-span; the limit L / 300 is 20 mm: acceptable"),
+        "unsolved": ("Exercise 1, y(1): no answer yet", "Exercise 1, numbers of solutions: no answer yet",
+                     "Exercise 2a: no answer yet", "Exercise 2d: no answer yet", "Exercise 3: complete midspan_deflection first"),
+        "wrong": ({"my_value_at_1 = None": "my_value_at_1 = 1",
+                   "my_constants = None": "my_constants = 2",                           # two different roots
+                   "my_polynomials = None": "my_polynomials = 1",
+                   "my_numbers_of_solutions = None": "my_numbers_of_solutions = [1, 1, 1]",   # two conditions, one solution
+                   "my_roots = None": "my_roots = [0, 2, 3]",                           # the double root counted once
+                   "my_coefficients = None": "my_coefficients = [1, -3, -4, 12]",       # r^2 - 4 in place of r^2 + 4
+                   "my_x = None": "my_x = sp.sin(t)",                                   # x'(pi) = -1
+                   "my_y = None": "my_y = x",                                           # the solution that was given
+                   FILL_IN: "    return w0 * L ** 4 / (8 * EI)"},                       # the cantilever
+                  "Exercise 3: not yet. For w0 = 10000 N/m, L = 6 m"),
+    },
+    NAME_15: {
+        "answers": {
+            "my_omega = None": "my_omega = 2",
+            "my_growth_per_second = None": "my_growth_per_second = 0.25",
+            "my_size_at_100 = None": "my_size_at_100 = 25",
+            "my_below_omega_0 = None": "my_below_omega_0 = True",
+            "my_higher_peak = None": "my_higher_peak = False",
+            "my_resonance = None": "my_resonance = 0.984",
+            "my_amplitude = None": "my_amplitude = 2.016",
+            "my_natural = None": "my_natural = 0.316",
+            "my_displacement = None": "my_displacement = 2.020",
+            "my_collapses = None": "my_collapses = True",
+            "my_charge = None": "my_charge = 2 + 4 * sp.exp(-3 * t) - 6 * sp.exp(-2 * t)",
+            FILL_IN: "    return F0 / np.sqrt((k - m * omega ** 2) ** 2 + (c * omega) ** 2)",
+        },
+        "solved": ("Exercise 1, omega: correct", "Exercise 1, growth: correct", "Exercise 1, size at t = 100: correct",
+                   "Exercise 1, below omega_0: correct", "Exercise 1, higher peak: correct",
+                   "Exercise 2a, omega: correct", "Exercise 2a, amplitude: correct", "Exercise 2b, natural frequency: correct",
+                   "Exercise 2b, displacement: correct", "Exercise 2b, collapse: correct", "Exercise 2c: correct",
+                   "Exercise 3: correct on all 5 cases"),
+        "unsolved": ("Exercise 1, omega: no answer yet", "Exercise 2a, amplitude: no answer yet", "Exercise 2c: no answer yet",
+                     "Exercise 3: complete amplitude first"),
+        "wrong": ({"my_omega = None": "my_omega = 4",                                   # k / m without the square root
+                   "my_growth_per_second = None": "my_growth_per_second = 0.5",         # F0 / (m omega)
+                   "my_size_at_100 = None": "my_size_at_100 = 50",
+                   "my_below_omega_0 = None": "my_below_omega_0 = False",
+                   "my_higher_peak = None": "my_higher_peak = True",
+                   "my_resonance = None": "my_resonance = 1.0",                         # omega_0, not the practical resonance
+                   "my_amplitude = None": "my_amplitude = 2.0",                         # the amplitude at omega_0
+                   "my_natural = None": "my_natural = 0.1",                             # k / m without the square root
+                   "my_displacement = None": "my_displacement = 1.01",                  # half: the size of one cosine
+                   "my_collapses = None": "my_collapses = False",
+                   "my_charge = None": "my_charge = 2 - 2 * sp.exp(-2 * t)",             # q(0) = 0 only
+                   FILL_IN: "    return F0 / np.sqrt((k / m - omega ** 2) ** 2 + (c * omega / m) ** 2)"},   # the factor m forgotten
+                  "Exercise 3: not yet. For omega = 0.984, m = 4, c = 1, k = 4, F0 = 2"),
+    },
+    NAME_14: {
+        "answers": {
+            "my_powers = None": "my_powers = [0, 2, 1, 1, 1, 0]",
+            "my_guessing_works = None": "my_guessing_works = False",
+            "my_a = None": "my_a = -sp.exp(2 * x) / 4",
+            "my_b = None": "my_b = x ** 2 * sp.exp(2 * x) / 2",
+            "my_c = None": "my_c = (-16 * sp.sin(3 * x) + 6 * sp.cos(3 * x)) / 73",
+            "my_d = None": "my_d = x ** 2 - 4 * x + 6 + sp.exp(-x) * (x - 5)",
+            FILL_IN: U_DERIVATIVES,
+        },
+        "solved": ("Exercise 1, powers: correct", "Exercise 1, tan x: correct", "Exercise 2a: correct",
+                   "Exercise 2b: correct", "Exercise 2c: correct", "Exercise 2d: correct",
+                   "Exercise 3, y'' + y = tan x (Lebl): correct", "Exercise 3, y'' - y = exp(x) (Lebl, Exercise 2.5.9): correct",
+                   "Exercise 3, x y'' + 2y' + x y = 1 (Adkins-Davidson 5.6, Example 4): correct", "Exercise 3: correct"),
+        "unsolved": ("Exercise 1, powers: no answer yet", "Exercise 2a: no answer yet", "Exercise 2d: no answer yet",
+                     "Exercise 3: complete u_derivatives first"),
+        "wrong": ({"my_powers = None": "my_powers = [0, 1, 1, 1, 1, 1]",                 # the double root and the trap
+                   "my_guessing_works = None": "my_guessing_works = True",
+                   "my_a = None": "my_a = sp.exp(2 * x) / 4",                           # a lost sign
+                   "my_b = None": "my_b = x * sp.exp(2 * x)",                           # multiplied by x once only
+                   "my_c = None": "my_c = -2 * sp.sin(3 * x) / 8",                      # the cosine forgotten
+                   "my_d = None": "my_d = x ** 2 - 4 * x + 6",                          # a particular solution only
+                   FILL_IN: "    return y2 * f / wronskian_of(y1, y2), -y1 * f / wronskian_of(y1, y2)"},   # both signs wrong
+                  "Exercise 2d: not yet (the equation is satisfied, but not the condition on y(0), y'(0))"),
+    },
+    "07_Mass_Spring_Damper.ipynb": {
+        "answers": {
+            "my_omega_0 = None": "my_omega_0 = 2",
+            "my_frequency_factor = None": "my_frequency_factor = 0.5",
+            "my_period_changes = None": "my_period_changes = False",
+            "my_p = None": "my_p = 1.25",
+            "my_omega_1 = None": "my_omega_1 = 2.165",
+            "my_amplitude = None": "my_amplitude = 0.902",
+            "my_phase = None": "my_phase = 0.983",
+            "my_critical = None": "my_critical = 20",
+            "my_time_between_zeros = None": "my_time_between_zeros = 1.451",
+            FILL_IN: ("    return ('undamped' if c == 0 else 'critically damped' if np.isclose(c * c, 4 * m * k) "
+                      "else 'underdamped' if c * c < 4 * m * k else 'overdamped')"),
+        },
+        "solved": ("Exercise 1, omega_0: correct", "Exercise 1, factor: correct", "Exercise 1, period: correct",
+                   "Exercise 2a, p: correct", "Exercise 2a, omega_1: correct", "Exercise 2a, amplitude: correct",
+                   "Exercise 2a, phase: correct", "Exercise 2b, critical damping: correct",
+                   "Exercise 2b, time between zeros: correct", "Exercise 3: correct on all 8 cases"),
+        "unsolved": ("Exercise 1, omega_0: no answer yet", "Exercise 2a, phase: no answer yet",
+                     "Exercise 2b, time between zeros: no answer yet", "Exercise 3: complete kind_of_motion first"),
+        "wrong": ({"my_omega_0 = None": "my_omega_0 = 4",                               # the square root forgotten
+                   "my_frequency_factor = None": "my_frequency_factor = 0.25",
+                   "my_period_changes = None": "my_period_changes = True",
+                   "my_omega_1 = None": "my_omega_1 = 2.5",                             # omega_0 instead of omega_1
+                   "my_amplitude = None": "my_amplitude = 0.707",
+                   "my_phase = None": "my_phase = 0.785",
+                   FILL_IN: "    return 'underdamped' if c * c < 4 * m * k else 'overdamped'"},
+                  "Exercise 1, omega_0: not yet"),
+    },
+    "06_Characteristic_Equation.ipynb": {
+        "answers": {
+            "my_oscillate = None": "my_oscillate = [True, True, False, False, False, True]",
+            "my_tend_to_zero = None": "my_tend_to_zero = [False, True, True, False, True, False]",
+            "my_a = None": "my_a = 2 * sp.exp(5 * x) + 3 * sp.exp(-2 * x)",
+            "my_b = None": "my_b = sp.sqrt(2) * sp.exp(-2 * x) * sp.cos(3 * x + sp.pi / 4)",   # the one-cosine form
+            "my_c = None": "my_c = (1 + 4 * x) * sp.exp(-4 * x)",
+            FILL_IN: "    d = np.sqrt(complex(b * b - 4 * a * c)); return (-b + d) / (2 * a), (-b - d) / (2 * a)",
+        },
+        "solved": ("Exercise 1, oscillate: correct", "Exercise 1, tend to zero: correct", "Exercise 2a: correct",
+                   "Exercise 2b: correct", "Exercise 2c: correct", "Exercise 3: correct"),
+        "unsolved": ("Exercise 1, oscillate: no answer yet", "Exercise 2a: no answer yet", "Exercise 2c: no answer yet",
+                     "Exercise 3: complete roots first"),
+        "wrong": ({"my_oscillate = None": "my_oscillate = [True, True, True, False, False, True]",
+                   "my_a = None": "my_a = 2 * sp.exp(5 * x) + 3 * sp.exp(2 * x)",          # a lost minus sign
+                   "my_b = None": "my_b = sp.exp(-2 * x) * (sp.cos(3 * x) + sp.sin(3 * x))",
+                   "my_c = None": "my_c = sp.exp(-4 * x)"},
+                  "Exercise 1, oscillate: not yet"),
+    },
+    "05_Wronskian_Abel.ipynb": {
+        "answers": {
+            "my_independent = None": "my_independent = [True, False, True, False]",
+            "my_b_and_c = None": "my_b_and_c = [4, -21]",
+            "my_K = None": "my_K = -10",
+            "my_wronskian = None": "my_wronskian = x ** -2",
+            "my_constants = None": "my_constants = [1, -1]",
+            FILL_IN: "    return sp.simplify(first * sp.diff(second, x) - sp.diff(first, x) * second)",
+        },
+        "solved": ("Exercise 1: correct", "Exercise 2a, b and c: correct", "Exercise 2a, K: correct",
+                   "Exercise 2b: correct", "Exercise 2c: correct", "Exercise 3: correct"),
+        "unsolved": ("Exercise 1: no answer yet", "Exercise 2a, K: no answer yet", "Exercise 2b: no answer yet",
+                     "Exercise 3: complete wronskian first"),
+        "wrong": ({"my_independent = None": "my_independent = [True, True, True, True]",
+                   "my_b_and_c = None": "my_b_and_c = [-4, -21]", "my_K = None": "my_K = 10",   # the lost minus signs
+                   "my_wronskian = None": "my_wronskian = 1 / x", "my_constants = None": "my_constants = [1, 1]"},
+                  "Exercise 1: not yet"),
+    },
+    "04_Euler_Method.ipynb": {
+        "answers": {
+            "my_value = None": "my_value = 8",
+            "my_value_is_below = None": "my_value_is_below = True",
+            "my_second_row = None": "my_second_row = 2.209",
+            "my_error_estimate = None": "my_error_estimate = 0.024",
+            "my_thresholds = None": "my_thresholds = [0.2, 0.4]",
+            FILL_IN: "    return y + h * f(x, y)",
+        },
+        "solved": ("Exercise 1, value: correct", "Exercise 1, below: correct", "Exercise 2a: correct",
+                   "Exercise 2b: correct", "Exercise 2c: correct", "Exercise 3: correct"),
+        "unsolved": ("Exercise 1, value: no answer yet", "Exercise 2a: no answer yet", "Exercise 2c: no answer yet",
+                     "Exercise 3: complete euler_step first"),
+        "wrong": ({"my_value = None": "my_value = 20.1", "my_value_is_below = None": "my_value_is_below = False",
+                   "my_second_row = None": "my_second_row = 1.926", "my_error_estimate = None": "my_error_estimate = 0.5",
+                   "my_thresholds = None": "my_thresholds = [0.4, 0.2]"},
+                  "Exercise 1, value: not yet"),
+    },
+    "03_Logistic_Equation.ipynb": {
+        "answers": {
+            "my_limits = None": "my_limits = [5, 5, 0]",
+            "my_equilibria = None": "my_equilibria = [1.55, 6.45]",
+            "my_critical_harvest = None": "my_critical_harvest = 1.6",
+            "my_fastest_time = None": "my_fastest_time = 2.77",
+            "my_fastest_rate = None": "my_fastest_rate = 0.625",
+            FILL_IN: "    return k * x * (M - x) - h",
+        },
+        "solved": ("Exercise 1: correct", "Exercise 2a, equilibria: correct", "Exercise 2a, critical harvest: correct",
+                   "Exercise 2b, time: correct", "Exercise 2b, rate: correct", "Exercise 3: correct"),
+        "unsolved": ("Exercise 1: no answer yet", "Exercise 2a, equilibria: no answer yet",
+                     "Exercise 2b, rate: no answer yet", "Exercise 3: complete harvested first"),
+        "wrong": ({"my_limits = None": "my_limits = [5, 5, 5]",            # x = 0 is an equilibrium
+                   "my_equilibria = None": "my_equilibria = [6.45, 1.55]", # wrong order
+                   "my_critical_harvest = None": "my_critical_harvest = 2", "my_fastest_time = None": "my_fastest_time = 2.5",
+                   "my_fastest_rate = None": "my_fastest_rate = 0.5"},
+                  "Exercise 1: not yet"),
+    },
+    "02_Radioactive_Decay.ipynb": {
+        "answers": {
+            "my_fractions = None": "my_fractions = [0.125, 0.37]",
+            "my_age_third = None": "my_age_third = 9082",
+            "my_age_tenth = None": "my_age_tenth = 19000",                  # rounded: accepted
+            "my_half_life = None": "my_half_life = 31",
+            FILL_IN: "    return -half_life * np.log(fraction) / np.log(2)",
+        },
+        "solved": ("Exercise 1: correct", "Exercise 2a: correct", "Exercise 2b: correct", "Exercise 2c: correct",
+                   "Exercise 3: correct"),
+        "unsolved": ("Exercise 1: no answer yet", "Exercise 2a: no answer yet", "Exercise 2c: no answer yet",
+                     "Exercise 3: complete age first"),
+        "wrong": ({"my_fractions = None": "my_fractions = [0.33, 0.5]",     # "three half-lives: one third"
+                   "my_age_third = None": "my_age_third = 17190", "my_age_tenth = None": "my_age_tenth = 57300",
+                   "my_half_life = None": "my_half_life = 25"},
+                  "Exercise 1: not yet"),
+    },
+    "01_Exponential_Growth.ipynb": {
+        "answers": {
+            "my_doubling_years = None": "my_doubling_years = 23",         # a whole number: accepted
+            "my_factor = None": "my_factor = 8",
+            "my_rate = None": "my_rate = 0.018",
+            "my_population = None": "my_population = 144",
+            "my_time_of_maximum = None": "my_time_of_maximum = 20",
+            FILL_IN: "    return np.log(P2 / P1) / (t2 - t1)",
+        },
+        "solved": ("Exercise 1, doubling time: correct", "Exercise 1, factor: correct", "Exercise 2a, rate: correct",
+                   "Exercise 2a, population: correct", "Exercise 2b: correct", "Exercise 3: correct"),
+        "unsolved": ("Exercise 1, doubling time: no answer yet", "Exercise 2a, rate: no answer yet",
+                     "Exercise 2b: no answer yet", "Exercise 3: complete growth_rate first"),
+        "wrong": ({"my_doubling_years = None": "my_doubling_years = 33",   # 100 / 3: a frequent slip
+                   "my_factor = None": "my_factor = 6", "my_rate = None": "my_rate = 0.02",
+                   "my_population = None": "my_population = 140", "my_time_of_maximum = None": "my_time_of_maximum = 2"},
+                  "Exercise 1, doubling time: not yet"),
+    },
+    "08_First_Steps_in_Python.ipynb": {
+        "answers": {
+            "my_x = None": "my_x = 1",
+            "my_y = None": "my_y = 2",
+            "my_derivative = None": "my_derivative = x**2 * (3 - 2*x) * sp.exp(-2*x)",
+            FILL_IN: "    return x * np.exp(-2 * x)",
+        },
+        "solved": ("Exercise 2a: correct", "Exercise 2b: correct", "Exercise 3: correct"),
+        "unsolved": ("Exercise 2a: no answer yet", "Exercise 2b: no answer yet",
+                     "Exercise 3: complete g(x) first"),
+        "wrong": ({"my_x = None": "my_x = 2", "my_y = None": "my_y = 1"}, "Exercise 2a: not yet"),
+    },
+    "09_Slope_Fields.ipynb": {
+        "answers": {
+            "my_A = None": "my_A = 3",
+            "my_B = None": "my_B = 1",
+            "my_C = None": "my_C = 2",
+            "my_orders = None": "my_orders = [2, 1, 3, 1]",
+            "my_linear = None": "my_linear = [True, False, True, False]",
+            "my_C1 = None": "my_C1 = 20/3",
+            "my_C2 = None": "my_C2 = 3.333",                      # rounded: accepted
+            FILL_IN: "    return np.exp(x - y)",
+            "my_solution = None": "my_solution = x",
+        },
+        "solved": ("Exercise 1: correct", "Exercise 2a, orders: correct", "Exercise 2a, linear: correct",
+                   "Exercise 2b: correct", "Exercise 3: correct", "Exercise 3, your solution: correct"),
+        "unsolved": ("Exercise 1: no answer yet", "Exercise 2a, orders: no answer yet",
+                     "Exercise 2b: no answer yet", "Exercise 3: complete f(x, y) first",
+                     "Exercise 3, your solution: no answer yet"),
+        "wrong": ({"my_A = None": "my_A = 1", "my_B = None": "my_B = 2", "my_C = None": "my_C = 3",
+                   "my_solution = None": "my_solution = 2 * x"},
+                  "Exercise 1: not yet"),
+    },
+    "10_Separable_Equations.ipynb": {
+        "answers": {
+            "my_x = None": "my_x = sp.exp(t**3) + 1",
+            "my_y = None": "my_y = 1 / (1 - sp.log(x))",
+            "my_right_end = None": "my_right_end = 2.718",        # rounded: accepted
+            "my_left_end = None": "my_left_end = -1",
+            FILL_IN: "    return (tank_radius / hole_radius) ** 2 * np.sqrt(2 * h0 / G)",
+        },
+        "solved": ("Exercise 2a: correct", "Exercise 2b, solution: correct", "Exercise 2b, right end: correct",
+                   "Exercise 2c: correct", "Exercise 3: correct"),
+        "unsolved": ("Exercise 2a: no answer yet", "Exercise 2b, solution: no answer yet",
+                     "Exercise 2b, right end: no answer yet", "Exercise 2c: no answer yet",
+                     "Exercise 3: complete drain_time first"),
+        "wrong": ({"my_x = None": "my_x = sp.exp(x ** 3) + 1",        # right formula, wrong letter: a hint
+                   "my_y = None": "my_y = 1 / (1 - sp.log(t))",
+                   "my_right_end = None": "my_right_end = 1", "my_left_end = None": "my_left_end = 0"},
+                  "Exercise 2a: not yet (write the formula with the letter t only"),
+    },
+    "11_Linear_First_Order.ipynb": {
+        "answers": {
+            "my_guarantees = None": "my_guarantees = [True, True, False, False]",
+            "my_y = None": "my_y = 2 * sp.exp(sp.cos(2 * x) + 1) + 1",
+            "my_P5 = None": "my_P5 = 6.31e6",                     # three digits: accepted
+            "my_interval = None": "my_interval = [-1, 3]",
+            FILL_IN: "    return 2 * (1 - np.exp(-2 * x))",
+        },
+        "solved": ("Exercise 1: correct", "Exercise 2a: correct", "Exercise 2b: correct",
+                   "Exercise 2c: correct", "Exercise 3: correct"),
+        "unsolved": ("Exercise 1: no answer yet", "Exercise 2a: no answer yet", "Exercise 2b: no answer yet",
+                     "Exercise 2c: no answer yet", "Exercise 3: complete y_exact first"),
+        "wrong": ({"my_guarantees = None": "my_guarantees = [True, True, True, True]",
+                   "my_P5 = None": "my_P5 = 6.9e6", "my_interval = None": "my_interval = [0, 3]"},
+                  "Exercise 1: not yet"),
+    },
+    "12_Exact_Equations.ipynb": {
+        "answers": {
+            "my_exact = None": "my_exact = [True, False, False, True]",
+            "my_F = None": "my_F = x**3 + 3*x*y + y**3 + 5",      # shifted by a constant: accepted
+            "my_mu = None": "my_mu = 2 * x",                      # a constant multiple: accepted
+            "my_y = None": "my_y = 2 / (3 * x - 2)",
+            FILL_IN: "    return sp.simplify(sp.diff(M, y) - sp.diff(N, x)) == 0",
+        },
+        "solved": ("Exercise 1: correct", "Exercise 2a: correct", "Exercise 2b: correct",
+                   "Exercise 2c: correct", "Exercise 3: correct"),
+        "unsolved": ("Exercise 1: no answer yet", "Exercise 2a: no answer yet", "Exercise 2b: no answer yet",
+                     "Exercise 2c: no answer yet", "Exercise 3: complete is_exact first"),
+        "wrong": ({"my_exact = None": "my_exact = [True, True, True, True]",
+                   "my_F = None": "my_F = x**3 + y**3", "my_mu = None": "my_mu = y",
+                   "my_y = None": "my_y = 2 / x"},
+                  "Exercise 2b: not yet"),
+    },
+    "13_First_Order_Models.ipynb": {
+        "answers": {
+            "my_fractions = None": "my_fractions = [0.37, 0.05]",         # two decimals: accepted
+            "my_rc_factors = None": "my_rc_factors = [2, 1]",
+            "my_rl_factors = None": "my_rl_factors = [0.5, 0.5]",
+            "my_minutes = None": "my_minutes = 3.73",
+            "my_concentration = None": "my_concentration = 1.73",
+            "my_room = None": "my_room = 10",
+            "my_parachute_speed = None": "my_parachute_speed = 5.1",
+            FILL_IN: "    return PUMP_IN * concentration_in(t) - PUMP_OUT * x / tank_volume(t)",
+        },
+        "solved": ("Exercise 1, fractions: correct", "Exercise 1, RC: correct", "Exercise 1, RL: correct",
+                   "Exercise 2a: correct", "Exercise 2b: correct", "Exercise 2c: correct",
+                   "Exercise 2d: correct", "Exercise 3: correct"),
+        "unsolved": ("Exercise 1, fractions: no answer yet", "Exercise 1, RC: no answer yet",
+                     "Exercise 2a: no answer yet", "Exercise 2d: no answer yet",
+                     "Exercise 3: complete rate_of_change first"),
+        "wrong": ({"my_fractions = None": "my_fractions = [0.63, 0.95]",       # closed, not left
+                   "my_rc_factors = None": "my_rc_factors = [2, 2]",
+                   "my_rl_factors = None": "my_rl_factors = [2, 0.5]",
+                   "my_minutes = None": "my_minutes = 6.67", "my_room = None": "my_room = 20",
+                   "my_parachute_speed = None": "my_parachute_speed = 56.0"},
+                  "Exercise 1, fractions: not yet"),
+    },
+}
+
+
+# --- executing the notebooks, in parallel ------------------------------------------------
+MAX_WORKERS = 8                             # kernels running at the same time (each is a Python process)
+WORKERS = int(os.environ.get("NOTEBOOK_TEST_WORKERS", min(MAX_WORKERS, os.cpu_count() or 1)))
+_DONE = {}                                  # what has been executed: key of a notebook -> ("ok", notebook) or ("error", exception)
+_WANTED = None                              # while the tests are only asked which notebooks they need: the list of them
+
+
+class _Asked(BaseException):
+    """Raised by execute() while the notebooks are being collected (not an Exception: no test catches it)."""
+
+
+def _key(nb) -> str:
+    return json.dumps([(cell.cell_type, cell.source) for cell in nb.cells])
+
+
+def _execute_now(nb):
+    client = nbclient.NotebookClient(nb, timeout=TIMEOUT_SECONDS, kernel_name="python3",
+                                     resources={"metadata": {"path": str(NOTEBOOKS)}})
+    client.execute()                         # raises CellExecutionError on the first failing cell
+    return nb
+
+
+def _outcome(nb):
+    try:
+        return "ok", _execute_now(nb)
+    except Exception as problem:             # kept, and raised again in the test that asked for this notebook
+        return "error", problem
+
+
+def execute(nb):
+    """The notebook after "Run All Cells"; raises what the first failing cell raised."""
+    if _WANTED is not None:
+        _WANTED.append(copy.deepcopy(nb))
+        raise _Asked
+    key = _key(nb)
+    if key not in _DONE:                     # not prepared in advance: run it now
+        _DONE[key] = _outcome(copy.deepcopy(nb))
+    state, result = _DONE[key]
+    if state == "error":
+        raise result
+    return copy.deepcopy(result)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _run_everything_first(request):
+    """Execute in parallel, once, every notebook that the selected tests of this file will ask for.
+
+    Each test builds a notebook and calls execute() on it. Here every selected test is called
+    once in a mode where execute() only takes note of the notebook and stops the test; then
+    the notebooks are executed together, WORKERS at a time, and the real tests find them ready.
+    A test that takes anything but its own parameters is left alone and runs as usual.
+    """
+    global _WANTED
+    if WORKERS <= 1:
+        yield
+        return
+    _WANTED = []
+    try:
+        for item in request.session.items:
+            if getattr(item, "module", None) is not sys.modules[__name__]:
+                continue
+            arguments = dict(getattr(getattr(item, "callspec", None), "params", {}))
+            if set(item.fixturenames) - set(arguments) - {"_run_everything_first", "request"}:
+                continue
+            try:
+                item.obj(**arguments)
+            except _Asked:
+                pass
+            except Exception:                # it fails before executing anything: the real run will say why
+                pass
+        unique = {}
+        for nb in _WANTED:
+            unique.setdefault(_key(nb), nb)
+    finally:
+        _WANTED = None
+    with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as pool:   # the work is done by the kernels
+        for key, outcome in zip(unique, pool.map(_outcome, unique.values())):
+            _DONE[key] = outcome
+    yield
+
+
+def printed(nb) -> str:
+    return "".join(output.get("text", "") for cell in nb.cells if cell.cell_type == "code"
+                   for output in cell.outputs if output.output_type == "stream")
+
+
+def with_answers(name: str, answers: dict):
+    """The notebook with each placeholder (found exactly once) replaced by an answer."""
+    nb = nbformat.read(NOTEBOOKS / name, as_version=4)
+    for placeholder, answer in answers.items():
+        cells = [cell for cell in nb.cells if cell.cell_type == "code" and placeholder in cell.source]
+        assert len(cells) == 1, f"{name}: placeholder not found exactly once: {placeholder!r}"
+        cells[0].source = cells[0].source.replace(placeholder, answer)
+    return nb
+
+
+def test_there_are_notebooks():
+    assert PATHS, f"no notebook matches {PATTERN} in {NOTEBOOKS}"
+    assert set(EXERCISES) <= {path.name for path in PATHS}
+
+
+@pytest.mark.parametrize("path", PATHS, ids=lambda p: p.stem)
+def test_notebook_runs_without_errors(path):
+    text = printed(execute(nbformat.read(path, as_version=4)))
+    for line in EXERCISES.get(path.name, {}).get("unsolved", ()):
+        assert line in text
+
+
+@pytest.mark.parametrize("name", sorted(EXERCISES))
+def test_exercises_accept_the_right_answers(name):
+    text = printed(execute(with_answers(name, EXERCISES[name]["answers"])))
+    for line in EXERCISES[name]["solved"]:
+        assert line in text
+
+
+@pytest.mark.parametrize("name", sorted(EXERCISES))
+def test_exercises_reject_wrong_answers(name):
+    answers, line = EXERCISES[name]["wrong"]
+    text = printed(execute(with_answers(name, answers)))
+    assert line in text
+    assert "correct" not in text.replace("not yet", "")
+
+
+def test_notebook_14_accepts_every_particular_solution():
+    # a particular solution plus any solution of the homogeneous equation is a particular solution
+    answers = dict(EXERCISES[NAME_14]["answers"])
+    answers["my_a = None"] = "my_a = -sp.exp(2 * x) / 4 + 3 * sp.exp(3 * x) - sp.exp(-2 * x)"
+    answers["my_b = None"] = "my_b = (x ** 2 / 2 + 7 * x - 1) * sp.exp(2 * x)"
+    answers["my_c = None"] = ("my_c = (-16 * sp.sin(3 * x) + 6 * sp.cos(3 * x)) / 73 "
+                              "+ sp.exp(x / 2) * sp.cos(sp.sqrt(3) * x / 2)")
+    text = printed(execute(with_answers(NAME_14, answers)))
+    for line in ("Exercise 2a: correct", "Exercise 2b: correct", "Exercise 2c: correct"):
+        assert line in text
+
+
+@pytest.mark.parametrize("formula, message", [
+    ("    return y1 * f / wronskian_of(y1, y2), -y2 * f / wronskian_of(y1, y2)", "Exercise 3: not yet (check the signs"),
+    ("    return -y2 * f / wronskian_of(y1, y2)", "Exercise 3: not yet (return the two formulas"),
+    ("    return -y2 * f, y1 * f", "Exercise 3: not yet (check the signs"),            # the Wronskian forgotten
+])
+def test_notebook_14_wrong_formulas_of_variation_of_parameters(formula, message):
+    text = printed(execute(with_answers(NAME_14, {FILL_IN: formula})))
+    assert message in text and "Exercise 3: correct" not in text
+
+
+@pytest.mark.parametrize("formula", [
+    "    return F0 / ((k - m * omega ** 2) ** 2 + (c * omega) ** 2)",                   # the square root forgotten
+    "    return F0 / np.sqrt((k - m * omega ** 2) ** 2 + c * omega ** 2)",              # c omega not squared
+    "    return F0 / abs(k - m * omega ** 2)",                                          # the formula without damping
+    "    return ol.steady_state(m, c, k, F0, omega)",                                   # amplitude and phase: two numbers
+])
+def test_notebook_15_wrong_amplitudes_are_caught_by_the_measurement(formula):
+    text = printed(execute(with_answers(NAME_15, {FILL_IN: formula})))
+    assert "Exercise 3: not yet" in text and "Exercise 3: correct" not in text
+
+
+def test_notebook_15_section_5_can_be_run_again_after_exercise_3():
+    # found by the review: the cell of Section 5 used the name of the function of Exercise 3
+    nb = with_answers(NAME_15, EXERCISES[NAME_15]["answers"])
+    section_5 = next(cell for cell in nb.cells if cell.cell_type == "code" and "FIGURE_4 = " in cell.source)
+    check = next(cell for cell in nb.cells if cell.cell_type == "code" and "PERIODS_MEASURED = " in cell.source)
+    nb.cells.extend([nbformat.v4.new_code_cell(section_5.source), nbformat.v4.new_code_cell(check.source)])
+    assert printed(execute(nb)).count("Exercise 3: correct on all 5 cases") == 2
+
+
+@pytest.mark.parametrize("answers, message", [
+    ({"my_numbers_of_solutions = None": "my_numbers_of_solutions = [0, np.inf, 1]"}, "Exercise 1, numbers of solutions: not yet"),
+    ({"my_numbers_of_solutions = None": "my_numbers_of_solutions = 3"}, None),          # not a list: no traceback
+    ({"my_y = None": "my_y = -sp.sqrt(1 - x ** 2)"}, "Exercise 2d: not yet (the equation is satisfied, but not the condition on y(0))"),
+    ({"my_y = None": "my_y = 0"}, "Exercise 2d: not yet (the equation is satisfied, but not the condition on y(0))"),
+    ({"my_x = None": "my_x = sp.sin(t) * 0"}, "Exercise 2c: not yet (the equation is satisfied, but not the condition on y'("),
+    ({FILL_IN: "    return 5 * w0 * L ** 3 / (384 * EI)"}, "Exercise 3: not yet. For w0"),
+    ({FILL_IN: "    return 5 / 384"}, "Exercise 3: not yet. For w0"),
+    ({FILL_IN: "    return [5 * w0 * L ** 4 / (384 * EI), 0]"}, "Exercise 3: not yet (midspan_deflection must return one number"),
+    ({FILL_IN: "    return 5 * w0 * L ** 4 / (384 * E * I)"}, "Exercise 3: not yet (midspan_deflection must return one number"),
+    ({FILL_IN: "    return 0.013021 * w0 * L ** 4 / EI"}, "Exercise 3: correct on all 3 beams"),       # the value printed in Section 6
+    ({FILL_IN: "    return 0.01302 * w0 * L ** 4 / EI"}, "Exercise 3: correct on all 3 beams"),
+    ({FILL_IN: "    return w0 * L ** 4 / (384 * EI)"}, "Exercise 3: not yet. For w0"),                 # fixed at both ends
+    ({"my_numbers_of_solutions = None": "my_numbers_of_solutions = np.array([np.inf, 0, 1])"},
+     "Exercise 1, numbers of solutions: correct"),
+])
+def test_notebook_16_particular_wrong_answers(answers, message):
+    try:
+        text = printed(execute(with_answers(NAME_16, answers)))
+    except Exception as problem:                               # a wrong answer must never stop the notebook
+        pytest.fail(f"the notebook stopped: {str(problem)[-300:]}")
+    assert message is None or message in text
+
+
+def test_is_exact_written_with_an_equation_gets_a_hint_not_a_traceback():
+    name = "12_Exact_Equations.ipynb"
+    text = printed(execute(with_answers(name, {FILL_IN: "    return sp.Eq(sp.diff(M, y), sp.diff(N, x))"})))
+    assert "Exercise 3: not yet (is_exact must return True or False" in text
+
+
+# --- help for a student who has never used a notebook (review of 2026-11-17) ---------------
+ANSWER_MARKER = "# ---- your answers go above this line; the lines below check them (nothing to change) ----"
+HINT = "Hint (MATH 331): "
+GUIDE_NOTEBOOK = "00_Index.ipynb"
+
+
+def sources(name, kind):
+    nb = nbformat.read(NOTEBOOKS / name, as_version=4)
+    return [cell.source for cell in nb.cells if cell.cell_type == kind]
+
+
+@pytest.mark.parametrize("name", sorted(EXERCISES))
+def test_answer_cells_say_where_the_answers_go_and_exercises_say_what_to_do_first(name):
+    def is_answer(line):                                    # my_x = None, with or without a comment
+        return re.fullmatch(r"my_\w+ = None\s*(#.*)?", line) is not None
+
+    answer_cells = [source for source in sources(name, "code") if is_answer(source.split("\n")[0])]
+    assert answer_cells, f"{name}: no answer cell found"
+    for source in answer_cells:
+        lines = source.split("\n")
+        at = lines.index(ANSWER_MARKER)                     # fails if the marker is missing
+        assert all(is_answer(line) for line in lines[:at]), f"{name}: something else above the marker"
+        assert not any(is_answer(line) for line in lines[at:]), f"{name}: an answer below the marker"
+    for source in sources(name, "code"):                    # and no answer line anywhere without a marker
+        assert ANSWER_MARKER in source or not any(is_answer(line) for line in source.split("\n")), f"{name}: {source[:60]}"
+    heading = [source for source in sources(name, "markdown") if source.startswith("## ") and ". Exercises\n" in source]
+    assert len(heading) == 1 and "**Before you start:** run the whole notebook (" in heading[0]
+
+
+def test_the_first_predict_exercise_does_not_show_its_answer():
+    nb = nbformat.read(NOTEBOOKS / "08_First_Steps_in_Python.ipynb", as_version=4)
+    cell = next(cell for cell in nb.cells if cell.cell_type == "code" and cell.source.startswith("print(2 + 3 * 4, 2 ** 3 ** 2"))
+    assert cell.outputs == []
+
+
+def test_the_guide_notebook_has_the_text_of_the_library():
+    import odelib as ol
+
+    text = "\n".join(sources(GUIDE_NOTEBOOK, "markdown"))
+    for step, words in ol.GUIDE_START:
+        assert step in text and words in text
+    for message, meaning, remedy in ol.GUIDE_ERRORS:
+        assert meaning in text and remedy in text
+    for question, answer in ol.GUIDE_HOW:
+        assert question in text and answer[1:] in text
+    for word, meaning in ol.GUIDE_WORDS:
+        assert meaning in text
+    assert ol.GUIDE_TYPING_RULE in text
+    names = {path.name for path in PATHS} - {GUIDE_NOTEBOOK}
+    assert all(f"]({name})" in text for name in names), "a notebook is missing from the table of notebook 00"
+
+
+MISTAKES = (("print(sqrt(16))", "write np.sqrt(2) with numbers"),
+            ("my_y = 2\nmy_x == 3.5", "the line my_x = ... is missing, or was typed with two = signs"),
+            ("y = 3.5m", "a unit after a number"),
+            ("y = 1\n y = 3.5", "start at the left edge"),      # (one line alone with a space in front is accepted)
+            ("value = 2(3 + 1)", "2 * (3 + 1)"),
+            ("x = sp.symbols('x')\nformula = x^3", "two stars"),
+            ("x = sp.symbols('x')\nformula = np.exp(-2 * x)", "use sp.exp"),
+            ("FACTOR = 3\nassert FACTOR * 2 == 4", "nothing is broken"),
+            ("print(minuts)", "Python does not know the name 'minuts'"),
+            ("my_answer = true", "write True"),
+            ("y = 3x + 1", "3 * x, not 3x"),
+            ("y = (1 + 2", "every ( needs its )"))
+
+
+def test_a_beginners_mistake_gets_a_hint_under_the_red_message():
+    setup = next(source for source in sources("08_First_Steps_in_Python.ipynb", "code") if "import odelib as ol" in source)
+    nb = nbformat.v4.new_notebook(cells=[nbformat.v4.new_code_cell(setup)]
+                                  + [nbformat.v4.new_code_cell(source) for source, _ in MISTAKES]
+                                  + [nbformat.v4.new_code_cell("1 / 0"), nbformat.v4.new_code_cell("print('still running')")])
+    nbclient.NotebookClient(nb, timeout=TIMEOUT_SECONDS, kernel_name="python3", allow_errors=True,
+                            resources={"metadata": {"path": str(NOTEBOOKS)}}).execute()
+    def kinds(cell):
+        return [output.output_type for output in cell.outputs]
+
+    def red_text(cell):                                     # what is written on the error stream, under the message
+        return "".join(output.text for output in cell.outputs if output.output_type == "stream" and output.name == "stderr")
+
+    for cell, (source, words) in zip(nb.cells[1:], MISTAKES):
+        # (Python itself may print a warning first, as for 2(3 + 1))
+        assert kinds(cell)[-2:] == ["error", "stream"], f"{source}: the red message, then the hint, were expected; got {kinds(cell)}"
+        last = cell.outputs[-1]
+        assert last.name == "stderr" and last.text.startswith(HINT) and words in last.text, f"wrong hint for: {source}"
+    assert kinds(nb.cells[-2]) == ["error"] and nb.cells[-2].outputs[0].ename == "ZeroDivisionError"   # no hint: only the message
+    assert "still running" in printed(nb)
+
+
+def test_an_error_still_stops_a_notebook_that_uses_the_library():
+    # the first way of adding hints (IPython's set_custom_exc) made the kernel swallow errors: never again
+    setup = next(source for source in sources("08_First_Steps_in_Python.ipynb", "code") if "import odelib as ol" in source)
+    for failing in ("assert 1 == 2", "print(sqrt(16))", "y = 3x", "1 / 0"):
+        nb = nbformat.v4.new_notebook(cells=[nbformat.v4.new_code_cell(setup), nbformat.v4.new_code_cell(failing),
+                                             nbformat.v4.new_code_cell("print('must not be reached')")])
+        with pytest.raises(nbclient.exceptions.CellExecutionError):
+            _execute_now(nb)
+        assert "must not be reached" not in printed(nb)
+
+
+# Slider functions at the ends of their sliders: the cases that used to stop with a traceback
+# or draw an empty picture (review of 2026-11-17). Each line is run in a cell added at the end.
+EXTREMES = {
+    NAME_16: ("plot_bvp(lam=1.0)", "plot_bvp(lam=4.0)", "plot_bvp(lam=9.0)", "plot_bvp(lam=0.2)", "plot_bvp(lam=10.0)",
+              "plot_bvp(lam=0.9999999999)", "plot_bvp(lam=1.1)", "plot_bvp(lam=0.2 + 8 * 0.1)",     # 1.0 as the slider gives it
+              "plot_beam(holding=0, uneven=-1.0)", "plot_beam(holding=0, uneven=1.0)", "plot_beam(holding=1, uneven=-1.0)",
+              "plot_beam(holding=1, uneven=1.0)", "plot_beam(holding=2, uneven=-1.0)", "plot_beam(holding=2, uneven=1.0)"),
+    NAME_15: ("plot_beats(omega=4.0)", "plot_beats(omega=3.95)", "plot_beats(omega=4.05)", "plot_beats(omega=2.5)",
+              "plot_beats(omega=5.0)", "plot_beats(omega=4.0000000001)",
+              "plot_response(c=0.1, omega=1.0)", "plot_response(c=2.0, omega=0.1)", "plot_response(c=0.1, omega=3.0)",
+              "plot_response(c=2.0, omega=3.0)", "plot_response(c=1.4, omega=1.0)", "plot_response(c=1.5, omega=0.1)"),
+    NAME_14: ("plot_family(c=3.0)", "plot_family(c=2.0)", "plot_family(c=4.0)", "plot_family(c=2.95)", "plot_family(c=3.05)",
+              "plot_family(c=3.0000000001)",
+              "plot_transient(y0=-2.0, v0=-5.0)", "plot_transient(y0=2.0, v0=5.0)", "plot_transient(y0=-0.1, v0=0.4)"),
+    "06_Characteristic_Equation.ipynb": ("plot_merging_roots(gap=0.01)", "plot_merging_roots(gap=0.9)",
+                                         "plot_roots(b=-2.0, c=-3.0)", "plot_roots(b=6.0, c=9.0)", "plot_roots(b=0.0, c=0.0)",
+                                         "plot_roots(b=4.0, c=4.0)", "plot_roots(b=-2.0, c=9.0)", "plot_roots(b=0.0, c=4.0)"),
+    "05_Wronskian_Abel.ipynb": ("abel_numeric(alpha=-1.0, x_end=40.0)", "abel_numeric(alpha=3.0, x_end=5.0)",
+                                "abel_numeric(alpha=0.0, x_end=40.0)"),
+    "05E_Wronskian_Further.ipynb": ("plot_parallelogram(x_now=0.0, zeta=0.0)", "plot_parallelogram(x_now=12.0, zeta=0.5)",
+                                    "plot_sturm(angle=0.0)", "plot_sturm(angle=180.0)", "plot_sturm(angle=5.0)"),
+    "04_Euler_Method.ipynb": ("plot_step(h=0.02, x_end=10.0)", "plot_step(h=0.6, x_end=10.0)", "plot_step(h=0.6, x_end=1.0)",
+                              "compare(model=list(MODELS)[0], n_steps=2)", "compare(model=list(MODELS)[1], n_steps=200)",
+                              "compare(model=list(MODELS)[2], n_steps=2)",
+                              "plot_stability(h=0.6, rate=-20.0, x_end=10.0)", "plot_stability(h=0.02, rate=-0.5, x_end=1.0)"),
+    "02_Radioactive_Decay.ipynb": ("plot_decay(half_life=500.0, N0=0.1, n_half_lives=1)",
+                                   "plot_decay(half_life=10000.0, N0=10.0, n_half_lives=10)",
+                                   "plot_dating(fraction=0.02, delta_f=0.05)", "plot_dating(fraction=0.99, delta_f=0.05)",
+                                   "plot_dating(fraction=0.5, delta_f=0.001)"),
+    "02E_Decay_Chains.ipynb": ("plot_chain(half_parent=50.0, half_daughter=50.0)",        # the equal case
+                               "plot_chain(half_parent=1.0, half_daughter=200.0, t_end=600.0)",
+                               "plot_chain(half_parent=200.0, half_daughter=1.0, t_end=10.0)"),
+    "01_Exponential_Growth.ipynb": ("plot_growth(P0=-100.0)", "plot_growth(P0=0.0)", "plot_growth(k=-0.1, P0=500.0)",
+                                    "plot_growth(k=0.0)", "plot_growth(k=0.15, P0=500.0, t_end=120.0)"),
+    "03_Logistic_Equation.ipynb": ("plot_logistic(k=0.5, M=1.0, x0=12.0, t_end=50.0)",
+                                   "plot_logistic(k=0.01, M=10.0, x0=0.1, t_end=2.0)",
+                                   "plot_harvest(h=0.0)", "plot_harvest(h=1.6)", "plot_harvest(h=2.5, t_end=80.0)",
+                                   "plot_harvest(h=2.5, k=0.05, M=2.0)", "plot_harvest(h=0.0, k=0.3, M=12.0, t_end=5.0)"),
+    "03E_Logistic_Further.ipynb": ("plot_negative_start(x0=-3.0, t_end=20.0)", "plot_negative_start(x0=-0.05, t_end=2.0)",
+                                   "plot_euler_logistic(product=2.9, x0=9.0, n_steps=100)",
+                                   "plot_euler_logistic(product=0.1, x0=0.1, n_steps=5)",
+                                   "plot_bifurcation(h=0.0)", "plot_bifurcation(h=1.6)", "plot_bifurcation(h=2.0)"),
+    "07_Mass_Spring_Damper.ipynb": ("plot_response(c=0.0)", "plot_response(c=4.0)", "plot_response(c=3.9)",
+                                    "plot_response(c=12.0, m=0.25, k=0.5)", "plot_response(c=0.0, x0=0.0, v0=0.0)",
+                                    "plot_response(c=12.0, m=4.0, k=16.0, x0=-2.0, v0=5.0)",
+                                    "plot_response(c=0.1, m=4.0, k=16.0, x0=2.0, v0=-5.0)"),
+    "07E_Vibrations_Further.ipynb": ("plot_root_locus(c=0.0)", "plot_root_locus(c=4.0)",
+                                     "plot_root_locus(c=12.0, m=0.25, k=0.5)", "plot_root_locus(c=0.1, m=4.0, k=16.0)",
+                                     "plot_cloud(c=0.0, t_now=0.0)", "plot_cloud(c=0.0, t_now=8.0)",
+                                     "plot_cloud(c=2.0, m=0.5, k=10.0, t_now=8.0)", "plot_cloud(c=2.0, m=0.5, k=1.0, t_now=8.0)",
+                                     "plot_map(b=0.0, c=0.0)", "plot_map(b=-4.0, c=-4.0)", "plot_map(b=4.0, c=8.0)",
+                                     "plot_map(b=4.0, c=4.0)", "plot_map(b=-4.0, c=8.0)", "plot_map(b=0.0, c=4.0)"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(EXTREMES))
+def test_slider_functions_survive_the_ends_of_their_sliders(name):
+    nb = nbformat.read(NOTEBOOKS / name, as_version=4)
+    lines = ["import warnings", "warnings.simplefilter('error', RuntimeWarning)", *EXTREMES[name], "print('extremes done')"]
+    nb.cells.append(nbformat.v4.new_code_cell(chr(10).join(lines)))
+    assert "extremes done" in printed(execute(nb))

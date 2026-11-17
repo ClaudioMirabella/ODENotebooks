@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="favicon.ico">
+<title>MATH 331 - Differential Equations: notebooks</title>
+<!-- JupyterLite reads its settings from this tag of the root page: keep it (see build_site.py). -->
+<script id="jupyter-config-data" type="application/json" data-jupyter-lite-root=".">{}</script>
+<!-- The quick start and the three tables of the guide are not written here: build_site.py fills the
+     comments QUICK_START, TYPING, TYPING_RULE, ERRORS, HOW and WORDS from the text of odelib.py, which is
+     also what ol.guide() prints and what notebook 00 shows. -->
+<style>
+  :root { --navy: #002060; --orange: #BF6019; --blue-tint: #EAF0F8; --orange-tint: #FDF0E6; }
+  body { margin: 0; font-family: Georgia, "Times New Roman", serif; color: var(--navy); background: #fff; line-height: 1.5; }
+  header { padding: 2rem 1.5rem 0.5rem; max-width: 60rem; margin: 0 auto; }
+  h1 { margin: 0; font-size: 2rem; }
+  h1 span { color: var(--orange); }
+  h2 { color: var(--orange); margin: 2rem 0 0.6rem; font-size: 1.3rem; }
+  main { max-width: 60rem; margin: 0 auto; padding: 0 1.5rem 3rem; }
+  a { color: var(--navy); }
+  ul.notebooks { list-style: none; padding: 0; margin: 0; }
+  ul.notebooks li { background: var(--blue-tint); border-radius: 0.5rem; margin: 0.5rem 0; padding: 0.8rem 1rem; }
+  ul.notebooks li.week { background: none; color: var(--navy); font-weight: bold; font-size: 1.05rem;
+                         padding: 0.2rem 0; margin: 1.4rem 0 0.2rem; border-bottom: 2px solid var(--orange); }
+  ul.notebooks a { font-weight: bold; text-decoration: none; font-size: 1.1rem; }
+  ul.notebooks a:hover, ul.notebooks a:focus { text-decoration: underline; }
+  .when { display: block; font-size: 0.9rem; color: #444; }
+  .card { background: var(--blue-tint); border-radius: 0.5rem; padding: 0.2rem 1.2rem 0.8rem; margin: 0.8rem 0; }
+  .card.warm { background: var(--orange-tint); }
+  .card h3 { margin: 0.8rem 0 0.2rem; font-size: 1.05rem; }
+  .card p, .card li { margin: 0.3rem 0; }
+  ol.steps { padding-left: 1.3rem; margin: 0.4rem 0; }
+  ol.steps li { margin: 0.5rem 0; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; margin: 0.6rem 0; font-size: 0.95rem; }
+  th, td { text-align: left; vertical-align: top; padding: 0.35rem 0.6rem; border-bottom: 1px solid #c9d3e3; }
+  th { background: var(--blue-tint); }
+  code, kbd { font-family: Consolas, "Courier New", monospace; font-size: 0.92em; background: #f3f3f3;
+              border: 1px solid #d0d0d0; border-radius: 0.2rem; padding: 0 0.25rem; white-space: nowrap; }
+  td.wrap code { white-space: normal; }
+  footer { max-width: 60rem; margin: 0 auto; padding: 1rem 1.5rem 2rem; font-size: 0.9rem; color: #444; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span>MATH 331</span> Differential Equations</h1>
+  <p>The course notebooks, running in your browser. Nothing to install, no account, no Python needed
+     to start.</p>
+</header>
+<main>
+  <div class="card warm" id="start">
+    <h3>New here? Five steps</h3>
+    <ol class="steps">
+<!--QUICK_START-->
+    </ol>
+    <p>Try them now, in ten minutes: open
+       <a href="notebooks/index.html?path=00_Index.ipynb"><b>00 - Start here</b></a>.
+       The whole guide is <a href="#guide">at the bottom of this page</a>, and inside every notebook:
+       click <code>+</code> in the bar at the top, type <code>ol.guide()</code> in the new grey box and
+       press Shift+Enter.</p>
+  </div>
+
+  <h2>Notebooks</h2>
+  <ul class="notebooks">
+<!--NOTEBOOKS-->
+  </ul>
+
+  <h2 id="guide">Student guide</h2>
+  <div class="card">
+    <h3>How to type mathematics</h3>
+    <div class="scroll">
+<!--TYPING-->
+    </div>
+    <p><!--TYPING_RULE--></p>
+  </div>
+  <div class="card warm">
+    <h3>When you see red</h3>
+    <p>A red box is an error message, not a disaster. Read its <b>last line</b>: it says what went
+       wrong. In the notebooks of this course a line just above or below the red box,
+       starting with <i>Hint (MATH 331)</i>, often says what to do.</p>
+    <div class="scroll">
+<!--ERRORS-->
+    </div>
+    <p>Still stuck? Copy the last line of the message and bring it to class or to office hours.</p>
+  </div>
+  <div class="card">
+    <h3>How do I ...</h3>
+    <ul>
+<!--HOW-->
+    </ul>
+  </div>
+  <div class="card warm">
+    <h3>Words</h3>
+    <div class="scroll">
+<!--WORDS-->
+    </div>
+  </div>
+  <div class="card">
+    <h3>Sliders</h3>
+    <p>A plot with a slider works only after its cell has run: until then the notebook shows a fixed
+       picture and a line that says so. Before you move a slider, predict what will happen; then check.
+       You can also click a slider and use the arrow keys.</p>
+    <h3>Change things</h3>
+    <p>You cannot break anything: the notebooks run only inside this browser tab. Change a number, run
+       the cell again, see what happens. If a red <code>AssertionError</code> appears, you changed a
+       number that the notebook compares with a value of the book: put it back, or delete that line.</p>
+  </div>
+  <div class="card warm">
+    <h3>Keep your work</h3>
+    <p>Your changes are saved <b>only in this browser, on this computer</b>. They are lost if you clear
+       the browser data, use a private window, or change computer. To keep a notebook, or to hand it in:
+       <b>File &gt; Download</b>.</p>
+    <h3>Start again from the original, or get a corrected version</h3>
+    <p>Once you have run or changed a notebook, the browser keeps showing <b>your</b> version, also
+       when your instructor has corrected the notebook on this site. To get the notebook of the site:
+       open <b>File &gt; Open...</b> (the list of files), right-click the notebook, choose
+       <b>Delete</b>, then come back to this page and open the notebook again.</p>
+  </div>
+  <div class="card">
+    <h3>What this site knows about you: nothing</h3>
+    <p>There is no login, and there are no cookies, trackers or advertisements. Python and the notebooks
+       are downloaded from this site only; your code and your answers never leave your computer.</p>
+    <h3>If it does not work on your device</h3>
+    <p>Use a recent version of Chrome, Edge, Firefox or Safari on a laptop; phones and old tablets may
+       be too slow. Every plot with sliders also has a fixed version in the notebook, and the course
+       videos and handouts need no Python. Tell your instructor: there are computers you can use.</p>
+  </div>
+</main>
+<footer>
+  MATH 331, Spring 2027. Notebooks follow J. Lebl, <i>Notes on Diffy Qs</i>. For the projects (from
+  Week 5) you may also install Python on your own laptop: ask your instructor for the instructions.
+</footer>
+</body>
+</html>

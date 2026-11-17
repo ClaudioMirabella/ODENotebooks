@@ -1,0 +1,21 @@
+# MATH 331: Python on your own laptop (optional; for the projects, from Week 5).
+# The course notebooks also run in the browser with nothing installed: see the course site.
+#
+#   conda env create -f environment-student.yml     # once
+#   conda activate math331
+#   jupyter lab                                      # then open the notebooks folder
+#
+# Only what the notebooks need. (The instructor's environment.yml also installs the tools that
+# make the course videos; students do not need them.)
+name: math331
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - numpy>=2.1
+  - scipy>=1.13
+  - sympy>=1.12
+  - matplotlib>=3.6
+  - jupyterlab
+  - ipywidgets>=8         # sliders in the notebooks
