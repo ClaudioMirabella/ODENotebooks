@@ -96,8 +96,8 @@ Six equations you will meet in this course:
 
 For small angles $\sin\theta \approx \theta$ (first term of the Taylor series, video R09), and the
 pendulum becomes $\theta'' + \tfrac{g}{L}\theta = 0$: linear, and the same equation as the spring
-without damper. Linear equations are the ones we can solve systematically; that is why so much of
-the course is about them.
+without damper. Linear equations have a general theory, and with constant coefficients a
+systematic method; that is why so much of the course is about them.
 """)
 
 md(r"""
@@ -193,8 +193,9 @@ assert constants == {C1: 100, C2: -90}                    # the answer printed i
 
 md(r"""
 **Initial conditions against boundary conditions.** The solutions of $y'' + y = 0$ are
-$y = a\cos x + b\sin x$ (Session 11). Two conditions at the *same* point always select exactly
-one solution. Two conditions at *different* points may not:
+$y = a\cos x + b\sin x$ (Session 11). For this equation, the values of $y$ and $y'$ at the *same*
+point always select exactly one solution (it is not so for every equation: Section 7). Values of
+$y$ at two *different* points may not:
 """)
 
 code(r"""
