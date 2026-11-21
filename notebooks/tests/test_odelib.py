@@ -5,6 +5,8 @@ Adkins-Davidson = W.A. Adkins, M.G. Davidson, Ordinary Differential Equations, S
 Run from the ode/notebooks folder:  python -m pytest
 """
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -940,3 +942,743 @@ def test_check_says_when_a_value_is_probably_rounded(capsys):
     assert "is close" not in capsys.readouterr().out
     assert ol.check("answer", "False", False) is False                            # text where True or False is expected
     assert "type your answer without quotes; got 'False'" in capsys.readouterr().out
+
+
+# --- linear systems x' = A x (notebook 17; Lebl, Sections 3.1-3.8) ------------------------------
+SEED = 331                                  # the seed of test_cross_validation.py
+SYSTEM_TIMES = np.linspace(0.0, 2.0, 21)
+WINDOW_TIMES = np.linspace(0.0, 10.0, 201)  # the window of the continuity tests
+AGREEMENT = 1e-9                            # eigen_solution against expm (plan 17, Section 3)
+
+
+def _is_eigenpair(A, value, vector):
+    A = np.asarray(A, dtype=float)
+    return np.linalg.norm(vector) > 0 and np.allclose(A @ vector, value * vector, rtol=1e-12, atol=1e-12)
+
+
+def _parallel(u, v):
+    # u is a nonzero (complex) multiple of v
+    u, v = np.asarray(u, dtype=complex), np.asarray(v, dtype=complex)
+    k = np.vdot(v, u) / np.vdot(v, v)
+    return np.linalg.norm(u) > 0 and np.allclose(u, k * v, rtol=1e-12, atol=1e-12)
+
+
+def _by_expm(A, start, times):
+    expm = pytest.importorskip("scipy.linalg").expm
+    A, start = np.asarray(A, dtype=float), np.asarray(start, dtype=float)
+    return np.array([expm(A * s) @ start for s in times])
+
+
+def test_companion_matrix_lebl_example_3_1_4_and_notebook_16():
+    # Lebl, Example 3.1.4: x''' = 2x'' + 8x' + x, that is x''' - 2x'' - 8x' - x = 0 (forcing t left out)
+    assert np.array_equal(ol.companion_matrix([1, -2, -8, -1]), [[0, 1, 0], [0, 0, 1], [1, 8, 2]])
+    # notebook 16, Lebl Example 2.3.3: y''' - 3y'' - y' + 3y = 0 has the roots -1, 1, 3
+    roots = np.sort(np.linalg.eigvals(ol.companion_matrix([1, -3, -1, 3])).real)
+    assert roots == pytest.approx([-1, 1, 3])
+    assert ol.companion_matrix([2.0, 3.0]) == pytest.approx(np.array([[-1.5]]))      # order 1: [[-a0 / a1]]
+    assert ol.companion_matrix([2, 3, 5]) == pytest.approx(np.array([[0, 1], [-2.5, -1.5]]))
+
+
+@pytest.mark.parametrize("order", [1, 2, 3, 4, 5])
+def test_companion_matrix_has_the_characteristic_polynomial_of_the_equation(order):
+    numbers = np.random.default_rng(SEED + order).uniform(-3.0, 3.0, order + 1)
+    numbers[0] = np.copysign(abs(numbers[0]) + 0.5, numbers[0])                  # a_n not too small
+    matrix = ol.companion_matrix(numbers)
+    assert matrix.shape == (order, order)
+    assert np.poly(matrix) == pytest.approx(numbers / numbers[0], abs=1e-10)     # det(lambda I - A) = p / a_n
+    eigenvalues = np.sort_complex(np.linalg.eigvals(matrix))
+    assert eigenvalues == pytest.approx(np.sort_complex(np.roots(numbers)), abs=1e-8)
+
+
+def test_companion_matrix_agrees_with_higher_order_solution():
+    coefficients, start = [1, -3, -1, 3], [1.0, 2.0, 3.0]                  # notebook 16, Lebl Example 2.3.3
+    by_system = _by_expm(ol.companion_matrix(coefficients), start, SHORT)[:, 0]
+    assert by_system == pytest.approx(ol.higher_order_solution(SHORT, coefficients, start), rel=1e-12)
+
+
+@pytest.mark.parametrize("bad", [[0, 1, 1], [1], [], [1, np.nan, 2], [[1, 2], [3, 4]], [1, [2, 3]], "abc",
+                                 [1, np.inf]])
+def test_companion_matrix_refuses_what_is_not_an_equation(bad):
+    with pytest.raises(ValueError, match="coefficients must be"):
+        ol.companion_matrix(bad)
+
+
+ROOT_3 = np.sqrt(3)
+# name: matrix, case, eigenvalues, a vector each eigenvector must be parallel to
+BOOK_MATRICES = {
+    "Lebl, Example 3.8.1": ([[1, 2], [2, 1]], ol.CASE_REAL, (-1, 3), ((1, -1), (1, 1))),
+    "Lebl 3.4, complex eigenvalues": ([[1, 1], [-1, 1]], ol.CASE_COMPLEX, (1 + 1j, 1 - 1j),
+                                      ((1, 1j), (1, -1j))),
+    "Lebl, Exercise 3.4.3": ([[3, 1], [2, 4]], ol.CASE_REAL, (2, 5), ((1, -1), (1, 2))),
+    "Lebl, Exercise 3.4.4": ([[1, -2], [2, 1]], ol.CASE_COMPLEX, (1 + 2j, 1 - 2j), ((1j, 1), (-1j, 1))),
+    "Lebl, Exercise 3.4.9": ([[1, 1], [-1, 0]], ol.CASE_COMPLEX,          # with the eigenvectors of the book
+                             ((1 + ROOT_3 * 1j) / 2, (1 - ROOT_3 * 1j) / 2),
+                             ((-2, 1 - ROOT_3 * 1j), (-2, 1 + ROOT_3 * 1j))),
+    "Lebl, Example 3.7.1": ([[3, 1], [0, 3]], ol.CASE_REPEATED_ONE, (3, 3), ((1, 0),)),
+    "Lebl 3.8, the simple case": ([[5, 4], [-1, 1]], ol.CASE_REPEATED_ONE, (3, 3), ((2, -1),)),
+    "Lebl, Exercise 3.7.1": ([[5, -3], [3, -1]], ol.CASE_REPEATED_ONE, (2, 2), ((1, 1),)),
+    "Lebl, Exercise 3.8.9": ([[-1, -1], [1, -3]], ol.CASE_REPEATED_ONE, (-2, -2), ((1, 1),)),
+    "Lebl, Exercise 3.8.14": ([[3, -1], [1, 1]], ol.CASE_REPEATED_ONE, (2, 2), ((1, 1),)),
+    "3 I": ([[3, 0], [0, 3]], ol.CASE_REPEATED_TWO, (3, 3), ((1, 0), (0, 1))),
+    "the closed tanks, Q / V = 0.01 per second": ([[-0.01, 0.01], [0.01, -0.01]], ol.CASE_REAL, (-0.02, 0),
+                                                  ((1, -1), (1, 1))),
+    "Lebl, Example 3.6.2, rail cars": ([[-1, 1], [2, -2]], ol.CASE_REAL, (-3, 0), ((1, -2), (1, 1))),
+    "Lebl, Example 3.6.1": ([[-3, 1], [2, -2]], ol.CASE_REAL, (-4, -1), ((1, -1), (1, 2))),
+    "diagonal (breaks the shortcut)": ([[2, 0], [0, 3]], ol.CASE_REAL, (2, 3), ((1, 0), (0, 1))),
+    "Lebl, Example 3.3.2, triangular": ([[1, 0], [1, -1]], ol.CASE_REAL, (-1, 1), ((0, 1), (2, 1))),
+    "almost diagonal, defective": ([[3, 1e-8], [0, 3]], ol.CASE_REPEATED_ONE, (3, 3), ((1, 0),)),
+    "zero matrix": ([[0, 0], [0, 0]], ol.CASE_REPEATED_TWO, (0, 0), ((1, 0), (0, 1))),
+}
+
+
+@pytest.mark.parametrize("name", sorted(BOOK_MATRICES))
+def test_two_by_two_case_on_the_matrices_of_the_book(name):
+    matrix, case, values, directions = BOOK_MATRICES[name]
+    found = ol.two_by_two_case(matrix)
+    A = np.asarray(matrix, dtype=float)
+    assert found.case == case
+    assert found.trace == pytest.approx(np.trace(A))
+    assert found.determinant == pytest.approx(np.linalg.det(A), abs=1e-14)
+    assert found.discriminant == pytest.approx(np.trace(A) ** 2 - 4 * np.linalg.det(A), abs=1e-12)
+    expected = np.array(values, dtype=complex)
+    assert np.array(found.eigenvalues, dtype=complex) == pytest.approx(expected, abs=1e-12)
+    assert len(found.eigenvectors) == len(directions)
+    if case != ol.CASE_REPEATED_ONE:
+        for value, vector, direction in zip(found.eigenvalues, found.eigenvectors, directions, strict=True):
+            assert _is_eigenpair(A, value, vector) and _parallel(vector, direction)
+        assert found.generalized is None
+    else:
+        vector, value = found.eigenvectors[0], found.eigenvalues[0]
+        assert _is_eigenpair(A, value, vector) and _parallel(vector, directions[0])
+        assert np.array_equal((A - value * np.eye(2)) @ found.generalized, vector)   # exactly, as by hand
+    if case == ol.CASE_COMPLEX:
+        assert found.eigenvalues[0].imag > 0
+    else:
+        assert found.eigenvalues[0] <= found.eigenvalues[1]
+
+
+def test_two_by_two_case_gives_the_vectors_of_lebl_example_3_7_1():
+    found = ol.two_by_two_case([[3, 1], [0, 3]])
+    assert np.array_equal(found.eigenvectors[0], [1, 0]) and np.array_equal(found.generalized, [0, 1])
+    assert repr(found).count("\n") == 0                                              # prints in one line
+    tanks = ol.two_by_two_case([[-0.01, 0.01], [0.01, -0.01]])
+    assert tanks.eigenvalues[1] == 0.0 and str(tanks.eigenvalues[1]) == "0.0"       # not -0.0
+
+
+@pytest.mark.parametrize("bad", [[[1, 2, 3], [4, 5, 6], [7, 8, 9]], [[1, 2, 3], [4, 5]],
+                                 [[1, np.nan], [0, 1]], [[1, 1j], [0, 1]], [1, 2], "abc", [[1, 2], [3, "x"]]])
+def test_two_by_two_case_refuses_what_is_not_a_real_2_by_2_matrix(bad):
+    with pytest.raises(ValueError):
+        ol.two_by_two_case(bad)
+
+
+@pytest.mark.parametrize("rtol", [0.0, -1e-12, np.nan])
+def test_two_by_two_case_refuses_a_bad_tolerance(rtol):
+    with pytest.raises(ValueError):
+        ol.two_by_two_case([[1, 2], [2, 1]], rtol)
+
+
+def test_eigen_solution_reproduces_the_solutions_of_the_book():
+    t = SYSTEM_TIMES
+    # Lebl, Example 3.3.2: x1 = e^t, x2 = e^t / 2 + 3 e^(-t) / 2
+    expected = np.column_stack([np.exp(t), np.exp(t) / 2 + 3 * np.exp(-t) / 2])
+    assert ol.eigen_solution(t, [[1, 0], [1, -1]], [1, 2]) == pytest.approx(expected, rel=1e-12)
+    # Lebl, Example 3.8.1: x = 3 e^(3t) + e^(-t), y = 3 e^(3t) - e^(-t)
+    expected = np.column_stack([3 * np.exp(3 * t) + np.exp(-t), 3 * np.exp(3 * t) - np.exp(-t)])
+    assert ol.eigen_solution(t, [[1, 2], [2, 1]], [4, 2]) == pytest.approx(expected, rel=1e-12)
+    # Lebl, Example 3.1.6 (x' = 2y - x, y' = x, x(0) = 1, y(0) = 0): x(2) = 2.475 and y(2) = 2.457, as printed
+    assert ol.eigen_solution(2.0, [[-1, 2], [1, 0]], [1, 0]) == pytest.approx([2.475, 2.457], abs=5e-4)
+    # Lebl, Exercise 3.8.14: x = ((1 - t) e^(2t), (2 - t) e^(2t))
+    expected = np.column_stack([(1 - t) * np.exp(2 * t), (2 - t) * np.exp(2 * t)])
+    assert ol.eigen_solution(t, [[3, -1], [1, 1]], [1, 2]) == pytest.approx(expected, rel=1e-12, abs=1e-12)
+    # Lebl 3.4, complex eigenvalues: C1 (e^t sin t, e^t cos t) + C2 (e^t cos t, -e^t sin t), at 0: (C2, C1)
+    C1, C2 = 3.0, 2.0
+    expected = np.exp(t)[:, None] * np.column_stack([C1 * np.sin(t) + C2 * np.cos(t),
+                                                     C1 * np.cos(t) - C2 * np.sin(t)])
+    assert ol.eigen_solution(t, [[1, 1], [-1, 1]], [C2, C1]) == pytest.approx(expected, rel=1e-12, abs=1e-12)
+    # Lebl, Example 3.7.1: C1 (1, 0) e^(3t) + C2 ((0, 1) + (1, 0) t) e^(3t), at 0: (C1, C2)
+    expected = np.exp(3 * t)[:, None] * np.column_stack([C1 + C2 * t, C2 + 0 * t])
+    assert ol.eigen_solution(t, [[3, 1], [0, 3]], [C1, C2]) == pytest.approx(expected, rel=1e-12)
+
+
+def test_eigen_solution_of_the_closed_tanks_and_its_shapes():
+    rate = 0.01                                          # Q / V = (1 L/s) / (100 L)
+    tanks = [[-rate, rate], [rate, -rate]]
+    t = np.linspace(0.0, 300.0, 31)
+    salt = ol.eigen_solution(t, tanks, [20.0, 0.0])
+    expected = np.column_stack([10 + 10 * np.exp(-t / 50), 10 - 10 * np.exp(-t / 50)])
+    assert salt == pytest.approx(expected, rel=1e-12)
+    assert salt.sum(axis=1) == pytest.approx(20.0, rel=1e-13)                         # the total salt stays
+    for matrix in ([[1, 2], [2, 1]], [[1, 1], [-1, 1]], [[3, 1], [0, 3]], [[3, 0], [0, 3]]):   # four cases
+        assert ol.eigen_solution(0.0, matrix, [1.5, -2.0]) == pytest.approx([1.5, -2.0], rel=1e-14, abs=1e-15)
+    assert ol.eigen_solution(1.0, tanks, [1, 2]).shape == (2,)
+    assert ol.eigen_solution([0.0, 1.0, 2.0], tanks, [1, 2]).shape == (3, 2)
+    assert ol.eigen_solution(np.zeros((4, 5)), tanks, [1, 2]).shape == (4, 5, 2)
+    backwards = ol.eigen_solution(-1.0, [[1, 0], [0, 2]], [1, 1])
+    assert backwards == pytest.approx([np.exp(-1), np.exp(-2)])                      # to the left of t = 0
+
+
+@pytest.mark.parametrize("size", [0.1, 1.0, 10.0])
+def test_eigen_solution_agrees_with_expm_on_random_matrices(size):
+    rng = np.random.default_rng(SEED)
+    for _ in range(50):
+        A = rng.uniform(-size, size, (2, 2))
+        start = rng.uniform(-1.0, 1.0, 2)
+        times = SYSTEM_TIMES / size                       # the same number of "time constants" for every size
+        reference = _by_expm(A, start, times)
+        scale = np.maximum(np.linalg.norm(reference, axis=1), np.linalg.norm(start))
+        error = np.linalg.norm(ol.eigen_solution(times, A, start) - reference, axis=1)
+        assert np.all(error <= AGREEMENT * scale), A
+
+
+@pytest.mark.parametrize("gap", [0.0] + [sign * 10.0 ** -power for power in range(3, 15) for sign in (1, -1)])
+def test_eigen_solution_is_continuous_across_the_boundaries_of_the_cases(gap):
+    # x'' + c x' + x = 0 as a system: complex pair below c = 2, repeated at 2, real distinct above
+    damped = [[0.0, 1.0], [-1.0, -(2.0 + gap)]]
+    expected = _by_expm(damped, [1.0, 0.0], WINDOW_TIMES)
+    assert ol.eigen_solution(WINDOW_TIMES, damped, [1.0, 0.0]) == pytest.approx(expected, abs=AGREEMENT)
+    # [[-1, 1], [e, -1]]: real for e > 0, complex for e < 0, one eigenvector at e = 0
+    coupled = [[-1.0, 1.0], [gap, -1.0]]
+    expected = _by_expm(coupled, [1.0, 2.0], WINDOW_TIMES)
+    assert ol.eigen_solution(WINDOW_TIMES, coupled, [1.0, 2.0]) == pytest.approx(expected, abs=AGREEMENT)
+
+
+def test_eigen_solution_refuses_what_it_cannot_compute():
+    with pytest.raises(ValueError, match="scipy.linalg.expm"):              # Lebl, Example 3.4.4: 3 x 3
+        ol.eigen_solution(SYSTEM_TIMES, [[2, 1, 1], [1, 2, 0], [0, 0, 2]], [1, 0, 0])
+    symmetric = [[1, 2], [2, 1]]
+    for matrix, start, times in ((symmetric, [1, 2, 3], 1.0), (symmetric, [np.nan, 0], 1.0),
+                                 ([[1, np.nan], [2, 1]], [1, 0], 1.0), (symmetric, [1, 0], np.inf),
+                                 (symmetric, [1, 0], 1e4), (symmetric, "ab", 1.0)):
+        with pytest.raises(ValueError):
+            ol.eigen_solution(times, matrix, start)
+
+
+LEBL_3_4_EXAMPLE = [[2, 1, 1], [1, 2, 0], [0, 0, 2]]       # Lebl, Examples 3.4.2-3.4.3: (1, 1, 0) for 3
+
+
+def test_check_vector_accepts_every_multiple_of_an_eigenvector(capsys):
+    values, vectors = np.linalg.eig(np.array(LEBL_3_4_EXAMPLE, dtype=float))
+    unit = vectors[:, np.argmin(np.abs(values - 3))]                         # (0.707, 0.707, 0), any sign
+    for answer in ([2, 2, 0], [-1, -1, 0], unit, (1, 1, 0), np.array([1j, 1j, 0])):
+        assert ol.check_vector("v", answer, [1, 1, 0], up_to_scale=True) is True
+    assert ol.check_vector("v", [1, -1j], [1j, 1], up_to_scale=True) is True            # a complex multiple
+    assert capsys.readouterr().out.count("v: correct") == 6
+
+
+@pytest.mark.parametrize("answer, words", [
+    ([1, 0, 0], "does not point along an eigenvector"),
+    ([0, 0, 0], "the zero vector is never an eigenvector"),
+    ([1, 1], "3 value(s) expected, got 2"),
+    (2.0, "3 value(s) expected, got 1"),                                               # a number, not a list
+    ([1, 1 + 1e-3, 0], "does not point along an eigenvector"),
+    (None, "no answer yet (replace None with your value)"),
+    ("1, 1, 0", "type your answer without quotes"),
+    ([(1, 5), 2, 0], "write 1.5, with a point"),
+    ([[1, 1, 0]], "one list of 3 numbers is expected, without brackets inside it"),
+    ([1, "a", 0], "a list of 3 numbers is expected"),
+])
+def test_check_vector_refuses_without_revealing_or_raising(capsys, answer, words):
+    assert ol.check_vector("v", answer, [1, 1, 0], up_to_scale=True) is False
+    out = capsys.readouterr().out
+    assert words in out and out.count("\n") == 1
+
+
+def test_check_vector_refuses_the_conjugate_eigenvector(capsys):
+    assert ol.check_vector("v", [-1j, 1], [1j, 1], up_to_scale=True) is False
+    assert "does not point along" in capsys.readouterr().out
+
+
+def test_check_vector_without_scale_is_check(capsys):
+    expected = [[0, 1], [-1, -2]]
+    for answer in (expected, np.array([[0, 1], [-1, -2.0]]), [[0, 1], [-1, -2.1]], [[0, 1]], None, "A", 2.0):
+        result = ol.check("A", answer, expected)
+        line = capsys.readouterr().out
+        assert ol.check_vector("A", answer, expected) is result
+        assert capsys.readouterr().out == line
+
+
+@pytest.mark.parametrize("expected", [[0, 0], [[1, 0], [0, 1]], [np.nan, 1], "ab"])
+def test_check_vector_refuses_a_mistake_of_the_notebook(expected):
+    with pytest.raises(ValueError):
+        ol.check_vector("v", [1, 1], expected, up_to_scale=True)
+
+
+# --- notebook 17, after the code review (2026-11-20) ----------------------------------------------
+def test_two_by_two_case_judges_tiny_and_huge_matrices_like_ordinary_ones():
+    tiny = ol.two_by_two_case([[1e-200, 1e-200], [0.0, 2e-200]])
+    assert tiny.case == ol.CASE_REAL and tiny.eigenvalues == pytest.approx((1e-200, 2e-200), rel=1e-12)
+    huge = ol.two_by_two_case([[1e155, 1.0], [1.0, 2e155]])
+    assert huge.case == ol.CASE_REAL and huge.eigenvalues == pytest.approx((1e155, 2e155), rel=1e-12)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")                                           # no overflow warning
+        assert ol.two_by_two_case([[1e300, 1e300], [-1e300, 1e300]]).case == ol.CASE_COMPLEX
+
+
+def test_two_by_two_case_nearly_equal_diagonal_has_two_eigenvectors():
+    nearly = [[1.0, 0.0], [0.0, 1.0 + 1e-13]]
+    found = ol.two_by_two_case(nearly)
+    assert found.case == ol.CASE_REPEATED_TWO
+    assert ol.eigen_solution(WINDOW_TIMES, nearly, [1.0, 2.0]) == pytest.approx(
+        _by_expm(nearly, [1.0, 2.0], WINDOW_TIMES), rel=1e-12)
+
+
+def test_companion_matrix_refuses_a_tiny_leading_coefficient():
+    with pytest.raises(ValueError, match="too small"):
+        ol.companion_matrix([1e-320, 1.0, 1.0])
+
+
+def test_eigen_solution_terms_with_a_zero_constant_stay_zero():
+    assert ol.eigen_solution(1000.0, [[1, 0], [0, -1]], [0, 1]) == pytest.approx([0.0, np.exp(-1000.0)])
+    for matrix in ([[1, 2], [2, 1]], [[1, 1], [-1, 1]], [[3, 1], [0, 3]], [[3, 0], [0, 3]]):
+        assert np.array_equal(ol.eigen_solution(1e4, matrix, [0, 0]), [0.0, 0.0])
+
+
+def test_check_vector_takes_tol_by_position_and_a_column(capsys):
+    assert ol.check_vector("v", [1.0, 1.001], [1, 1], 1e-2, up_to_scale=True) is True
+    assert ol.check_vector("v", np.array([[2.0], [2.0]]), [1, 1], up_to_scale=True) is True   # a column
+    assert ol.check_vector("A", [[1, 2]], [[1, 2]], 1e-3) is True
+    capsys.readouterr()
+
+
+# --- the phase plane and nonlinear systems (notebook 18; Lebl, Sections 3.5, 8.1-8.3) ----------------
+# Lebl, Section 3.5, Cases 1-6: matrix, kind, stability, eigenvalues (as two_by_two_case orders them)
+LEBL_CASES = {
+    1: ([[1, 1], [0, 2]], ol.KIND_SOURCE, ol.STABILITY_UNSTABLE, (1, 2)),
+    2: ([[-1, -1], [0, -2]], ol.KIND_SINK, ol.STABILITY_ASYMPTOTIC, (-2, -1)),
+    3: ([[1, 1], [0, -2]], ol.KIND_SADDLE, ol.STABILITY_UNSTABLE, (-2, 1)),
+    4: ([[0, 1], [-4, 0]], ol.KIND_CENTER, ol.STABILITY_STABLE, (2j, -2j)),
+    5: ([[1, 1], [-4, 1]], ol.KIND_SPIRAL_SOURCE, ol.STABILITY_UNSTABLE, (1 + 2j, 1 - 2j)),
+    6: ([[-1, -1], [4, -1]], ol.KIND_SPIRAL_SINK, ol.STABILITY_ASYMPTOTIC, (-1 + 2j, -1 - 2j)),
+}
+# Lebl, Exercise 3.5.6 (a)-(e), with the answers printed in the book
+EXERCISE_356 = {
+    "a": ([[1, 1], [1, -1]], ol.KIND_SADDLE, (-np.sqrt(2), np.sqrt(2))),
+    "b": ([[1, 1], [0, 2]], ol.KIND_SOURCE, (1, 2)),
+    "c": ([[0, -2], [2, 0]], ol.KIND_CENTER, (2j, -2j)),
+    "d": ([[1, 3], [-2, -4]], ol.KIND_SINK, (-2, -1)),
+    "e": ([[1, -4], [-4, 1]], ol.KIND_SADDLE, (-3, 5)),
+}
+JACOBIAN_AGREEMENT = 1e-8                   # relative, against the exact Jacobians (plan 18, Section 3)
+TINY, HUGE = 1e-200, 1e150                  # scale factors of the scale-invariance test
+PORTRAIT_SEED_POINTS = 10                   # seeded random points for the Jacobian of Example 8.1.2
+LV = (0.4, 0.01, 0.003, 0.3)                # Lebl's a, b, c, d (Section 8.3.2), per time unit
+LV_START = (50.0, 20.0)                     # 50 hares and 20 foxes
+
+
+def lotka_volterra(x, y):
+    a, b, c, d = LV
+    return (a - b * y) * x, (c * x - d) * y
+
+
+def lotka_volterra_constant(x, y):
+    # Lebl's constant of motion C = y^a x^d e^(-c x - b y)
+    a, b, c, d = LV
+    return y ** a * x ** d * np.exp(-c * x - b * y)
+
+
+def example_811(x, y):
+    return y, -x + x ** 2                   # Lebl, Example 8.1.1: x'' = -x + x^2
+
+
+def example_823(x, y):
+    return y, -x + y ** 3                   # Lebl, Example 8.2.3
+
+
+def pendulum(theta, omega):
+    return omega, -np.sin(theta)            # Lebl, Section 8.3.1 with g / L = 1
+
+
+def linear_field(matrix):
+    (a11, a12), (a21, a22) = np.asarray(matrix, dtype=float)
+    return lambda x, y: (a11 * x + a12 * y, a21 * x + a22 * y)
+
+
+@pytest.mark.parametrize("number", sorted(LEBL_CASES))
+def test_classify_linear_2d_gives_the_six_rows_of_lebl_table_3_5_1(number):
+    matrix, kind, stability, eigenvalues = LEBL_CASES[number]
+    found = ol.classify_linear_2d(matrix)
+    assert (found.kind, found.stability) == (kind, stability)
+    assert np.array(found.eigenvalues, dtype=complex) == pytest.approx(np.array(eigenvalues, dtype=complex))
+    case = ol.two_by_two_case(matrix)                          # a thin wrapper: the same numbers
+    assert (found.trace, found.determinant, found.eigenvalues, found.case) == (
+        case.trace, case.determinant, case.eigenvalues, case.case)
+    assert found.trace == pytest.approx(sum(eigenvalues).real)          # lambda1 + lambda2 = tr A
+    assert found.determinant == pytest.approx(np.prod(eigenvalues).real)  # lambda1 lambda2 = det A
+
+
+@pytest.mark.parametrize("item", sorted(EXERCISE_356))
+def test_classify_linear_2d_lebl_exercise_3_5_6(item):
+    matrix, kind, eigenvalues = EXERCISE_356[item]
+    found = ol.classify_linear_2d(matrix)
+    assert found.kind == kind
+    assert np.array(found.eigenvalues, dtype=complex) == pytest.approx(np.array(eigenvalues, dtype=complex))
+
+
+@pytest.mark.parametrize("matrix, kind, stability", [
+    ([[2, -1], [1, 2]], ol.KIND_SPIRAL_SOURCE, ol.STABILITY_UNSTABLE),          # Exercise 3.5.7: 2 +- i
+    ([[1, 1], [0, 1]], ol.KIND_DEGENERATE_SOURCE, ol.STABILITY_UNSTABLE),      # Exercise 3.5.2
+    ([[1, 1], [1, 1]], ol.KIND_LINE_OF_EQUILIBRIA, ol.STABILITY_UNSTABLE),     # Exercise 3.5.3
+    ([[0, 1], [0, 0]], ol.KIND_PARALLEL_LINES, ol.STABILITY_UNSTABLE),         # Exercise 3.5.8
+    ([[-0.01, 0.01], [0.01, -0.01]], ol.KIND_LINE_OF_EQUILIBRIA, ol.STABILITY_STABLE),   # notebook 17's tanks
+    ([[-1, 1], [0, -1]], ol.KIND_DEGENERATE_SINK, ol.STABILITY_ASYMPTOTIC),
+    ([[2, 0], [0, 2]], ol.KIND_STAR_SOURCE, ol.STABILITY_UNSTABLE),
+    ([[-1, 0], [0, -1]], ol.KIND_STAR_SINK, ol.STABILITY_ASYMPTOTIC),
+    ([[0, 0], [0, 0]], ol.KIND_ALL_EQUILIBRIA, ol.STABILITY_STABLE),
+])
+def test_classify_linear_2d_borderline_cases_of_lebl_exercises(matrix, kind, stability):
+    found = ol.classify_linear_2d(matrix)
+    assert (found.kind, found.stability) == (kind, stability)
+
+
+@pytest.mark.parametrize("a, b", [(1, 3), (-1, -3), (1, -3), (-1, 3)])
+def test_classify_linear_2d_a_diagonal_matrix_is_never_a_spiral(a, b):
+    # Lebl, Exercise 3.5.4: the eigenvalues a and b are real
+    kind = ol.classify_linear_2d([[a, 0], [0, b]]).kind
+    assert kind not in (ol.KIND_SPIRAL_SOURCE, ol.KIND_SPIRAL_SINK, ol.KIND_CENTER)
+    assert kind == (ol.KIND_SADDLE if a * b < 0 else ol.KIND_SOURCE if a > 0 else ol.KIND_SINK)
+
+
+@pytest.mark.parametrize("p, kind", [
+    (-3.0, ol.KIND_SPIRAL_SINK), (-1.0, ol.KIND_SPIRAL_SINK), (0.0, ol.KIND_DEGENERATE_SINK),
+    (0.5, ol.KIND_SINK), (1.0, ol.KIND_LINE_OF_EQUILIBRIA), (3.0, ol.KIND_SADDLE),
+    (-3.0 + 30 * 0.1, ol.KIND_DEGENERATE_SINK),                       # 0, as the slider gives it
+    (-3.0 + 40 * 0.1, ol.KIND_LINE_OF_EQUILIBRIA),                    # 1, as the slider gives it
+    (1e-10, ol.KIND_SINK), (-1e-10, ol.KIND_SPIRAL_SINK), (1.0 - 1e-10, ol.KIND_SINK),
+    (1.0 + 1e-10, ol.KIND_SADDLE),
+])
+def test_classify_linear_2d_on_the_family_of_slider_1(p, kind):
+    # notebook 18, slider 1: A = [[-1, 1], [p, -1]], tr A = -2, det A = 1 - p, discriminant 4 p
+    assert ol.classify_linear_2d([[-1.0, 1.0], [p, -1.0]]).kind == kind
+
+
+@pytest.mark.parametrize("factor", [TINY, HUGE])
+def test_classify_linear_2d_does_not_depend_on_the_unit(factor):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")                                       # no overflow warning
+        for matrix, kind, stability, _ in LEBL_CASES.values():
+            assert ol.classify_linear_2d(np.array(matrix) * factor)[:2] == (kind, stability)
+
+
+@pytest.mark.parametrize("bad", [[[1, 2, 3], [4, 5, 6], [7, 8, 9]], [[1, np.nan], [0, 1]], [[1, 1j], [0, 1]],
+                                 "abc", [1, 2]])
+def test_classify_linear_2d_refuses_what_is_not_a_real_2_by_2_matrix(bad):
+    with pytest.raises(ValueError):
+        ol.classify_linear_2d(bad)
+    with pytest.raises(ValueError):
+        ol.classify_linear_2d([[1, 2], [3, 4]], rtol=0.0)
+
+
+def test_jacobian_lebl_example_8_1_2():
+    for point, exact in (((0, 0), [[0, 1], [-1, 0]]), ((1, 0), [[0, 1], [1, 0]])):
+        assert ol.jacobian(example_811, point) == pytest.approx(np.array(exact), abs=JACOBIAN_AGREEMENT)
+    points = np.random.default_rng(SEED).uniform(-3.0, 3.0, (PORTRAIT_SEED_POINTS, 2))
+    for x, y in points:
+        exact = np.array([[0, 1], [-1 + 2 * x, 0]])
+        assert ol.jacobian(example_811, (x, y)) == pytest.approx(exact, rel=JACOBIAN_AGREEMENT,
+                                                                 abs=JACOBIAN_AGREEMENT)
+
+
+@pytest.mark.parametrize("field, point, exact", [
+    (lambda x, y: (-y - x ** 2, -x + y ** 2), (1, -1), [[-2, -1], [-1, -2]]),            # Example 8.2.1
+    (lambda x, y: (y + y ** 2 * np.exp(x), x), (0, -1), [[1, -1], [1, 0]]),                # Example 8.2.2
+    (lotka_volterra, (100, 40), [[0, -1], [0.12, 0]]),                                    # Section 8.3.2
+    (pendulum, (np.pi, 0), [[0, 1], [1, 0]]),                                             # Section 8.3.1
+    (linear_field([[0.3, -7.0], [2.5, 1.1]]), (12.0, -4.0), [[0.3, -7.0], [2.5, 1.1]]),   # a linear field
+])
+def test_jacobian_on_the_examples_of_the_book(field, point, exact):
+    assert ol.jacobian(field, point) == pytest.approx(np.array(exact, dtype=float), rel=JACOBIAN_AGREEMENT,
+                                                      abs=JACOBIAN_AGREEMENT)
+
+
+def test_jacobian_in_three_dimensions_lebl_exercise_8_1_9():
+    # x' = x + z^2, y' = z^2 - y, z' = z + x^2 at (-1, 1, -1); the linearization u' = u - 2w, v' = -v - 2w,
+    # w' = w - 2u (the text copy prints u' = u - 2: a w is lost)
+    def field(x, y, z):
+        return x + z ** 2, z ** 2 - y, z + x ** 2
+
+    exact = np.array([[1, 0, -2], [0, -1, -2], [-2, 0, 1]], dtype=float)
+    assert ol.jacobian(field, (-1, 1, -1)) == pytest.approx(exact, abs=JACOBIAN_AGREEMENT)
+    assert ol.jacobian(field, (-1, 1, -1)).shape == (3, 3)
+
+
+def test_jacobian_refuses_what_it_cannot_compute():
+    with pytest.raises(ValueError, match="finite"):
+        ol.jacobian(example_811, (np.nan, 0))
+    with pytest.raises(ValueError, match="2 numbers"):
+        ol.jacobian(lambda x, y: (x, y, x * y), (1, 1))                           # three values for two
+    with pytest.raises(ValueError, match="value number 1 of f is not a finite number at the point"):
+        ol.jacobian(lambda x, y: (1 / x, y), (0.0, 1.0))
+    with pytest.raises(ValueError, match="coordinate 1"):
+        ol.jacobian(lambda x, y: (np.sqrt(x), y), (0.0, 1.0))                     # NaN just left of 0
+    for h in (0.0, -1e-5):
+        with pytest.raises(ValueError):
+            ol.jacobian(example_811, (1, 0), h)
+    with pytest.raises(ValueError, match="flat list"):
+        ol.jacobian(example_811, [[1, 0]])
+    with pytest.raises(ZeroDivisionError):                                       # an error of f is f's own
+        ol.jacobian(lambda x, y: (1 / 0, y), (1, 1))
+
+
+@pytest.mark.parametrize("field, point, kind, stability", [
+    (lambda x, y: (-y - x ** 2, -x + y ** 2), (0, 0), ol.KIND_SADDLE, ol.STABILITY_UNSTABLE),      # 8.2.1
+    (lambda x, y: (-y - x ** 2, -x + y ** 2), (1, -1), ol.KIND_SINK, ol.STABILITY_ASYMPTOTIC),
+    (lambda x, y: (y + y ** 2 * np.exp(x), x), (0, 0), ol.KIND_SADDLE, ol.STABILITY_UNSTABLE),     # 8.2.2
+    (lambda x, y: (y + y ** 2 * np.exp(x), x), (0, -1), ol.KIND_SPIRAL_SOURCE, ol.STABILITY_UNSTABLE),
+    (example_811, (1, 0), ol.KIND_SADDLE, ol.STABILITY_UNSTABLE),
+    (lambda x, y: (-x + x ** 2, y), (0, 0), ol.KIND_SADDLE, ol.STABILITY_UNSTABLE),               # 8.2.8 (a)
+    (lambda x, y: (-x + x ** 2, y), (1, 0), ol.KIND_STAR_SOURCE, ol.STABILITY_UNSTABLE),
+    (lambda x, y: (y - y ** 2 - x, -x), (0, 0), ol.KIND_SPIRAL_SINK, ol.STABILITY_ASYMPTOTIC),    # 8.2.8 (b)
+    (lambda x, y: (y - y ** 2 - x, -x), (0, 1), ol.KIND_SADDLE, ol.STABILITY_UNSTABLE),
+    (lambda x, y: (x * y, x + y - 1), (1, 0), ol.KIND_SADDLE, ol.STABILITY_UNSTABLE),             # 8.2.8 (c)
+    (lambda x, y: (x * y, x + y - 1), (0, 1), ol.KIND_DEGENERATE_SOURCE, ol.STABILITY_UNSTABLE),
+    (lotka_volterra, (0, 0), ol.KIND_SADDLE, ol.STABILITY_UNSTABLE),
+    (lotka_volterra, (100, 40), ol.KIND_CENTER, ol.STABILITY_INCONCLUSIVE),
+])
+def test_classify_equilibrium_2d_on_the_examples_and_exercises_of_the_book(field, point, kind, stability):
+    found = ol.classify_equilibrium_2d(field, point)
+    assert (found.linear.kind, found.stability) == (kind, stability)
+    assert found.point == tuple(float(value) for value in point)
+
+
+def test_classify_equilibrium_2d_eigenvalues_of_the_book():
+    sink = ol.classify_equilibrium_2d(lambda x, y: (-y - x ** 2, -x + y ** 2), (1, -1))   # Example 8.2.1
+    assert sink.linear.eigenvalues == pytest.approx((-3, -1))
+    spiral = ol.classify_equilibrium_2d(lambda x, y: (y + y ** 2 * np.exp(x), x), (0, -1))   # Example 8.2.2
+    assert spiral.linear.eigenvalues[0] == pytest.approx(0.5 + 1j * np.sqrt(3) / 2)
+    assert spiral.reason == ol.REASON_LINEAR
+    # Lebl, Exercise 8.3.7 (b): foxes hunted at 10 per time unit, the equilibrium (550/3, 40) typed as floats
+    a, b, c, d = LV
+    hunted = ol.classify_equilibrium_2d(lambda x, y: ((a - b * y) * x, (c * x - d) * y - 10), (550 / 3, 40))
+    assert hunted.linear.kind == ol.KIND_SPIRAL_SOURCE
+    assert hunted.linear.eigenvalues[0] == pytest.approx((5 + 1j * np.sqrt(327)) / 40, rel=1e-8)
+    assert hunted.jacobian == pytest.approx(np.array([[0, -11 / 6], [3 / 25, 1 / 4]]), abs=JACOBIAN_AGREEMENT)
+
+
+def test_classify_equilibrium_2d_centers_and_singular_points_are_inconclusive():
+    for field in (example_811, example_823):                     # the same linearization, a center
+        found = ol.classify_equilibrium_2d(field, (0, 0))
+        assert found.linear.kind == ol.KIND_CENTER and found.stability == ol.STABILITY_INCONCLUSIVE
+        assert found.reason == ol.REASON_CENTER
+    for k in range(-2, 3):                                       # the pendulum at (k pi, 0)
+        found = ol.classify_equilibrium_2d(pendulum, (k * np.pi, 0))
+        expected = ((ol.KIND_CENTER, ol.STABILITY_INCONCLUSIVE) if k % 2 == 0
+                    else (ol.KIND_SADDLE, ol.STABILITY_UNSTABLE))
+        assert (found.linear.kind, found.stability) == expected
+    # Lebl, Exercise 8.1.7 (a) at (1, 0), and x' = x^2, y' = y^2 at (0, 0) (Section 8.2.1): det J = 0
+    for field, point in ((lambda x, y: (np.sin(np.pi * y) + (x - 1) ** 2, y ** 2 - y), (1, 0)),
+                         (lambda x, y: (x ** 2, y ** 2), (0, 0))):
+        found = ol.classify_equilibrium_2d(field, point)
+        assert found.stability == ol.STABILITY_INCONCLUSIVE and found.reason == ol.REASON_SINGULAR
+
+
+def test_classify_equilibrium_2d_refuses_a_point_that_is_not_an_equilibrium():
+    with pytest.raises(ValueError, match=r"\(x, y\) = \(0.5, 0\) is not an equilibrium: f = 0, g = -0.25"):
+        ol.classify_equilibrium_2d(example_811, (0.5, 0))
+    with pytest.raises(ValueError, match="2 coordinates"):
+        ol.classify_equilibrium_2d(example_811, (0, 0, 0))
+
+
+@pytest.mark.parametrize("number", sorted(LEBL_CASES))
+def test_trajectories_agree_with_eigen_solution(number):
+    matrix = LEBL_CASES[number][0]
+    starts = [(1.0, 0.5), (-0.3, 0.8)]
+    times, paths = ol.trajectories(linear_field(matrix), starts, (0.0, 2.0), 2000)
+    for k, start in enumerate(starts):
+        exact = ol.eigen_solution(times, matrix, start)
+        error = np.max(np.linalg.norm(paths[:, k] - exact, axis=1) / np.linalg.norm(exact, axis=1))
+        assert error < AGREEMENT
+
+
+def test_trajectories_lotka_volterra_against_solve_ivp_and_the_constant_of_motion():
+    solve_ivp = pytest.importorskip("scipy.integrate").solve_ivp
+    times, paths = ol.trajectories(lotka_volterra, LV_START, (0.0, 40.0), 1600)
+    reference = solve_ivp(lambda s, u: lotka_volterra(*u), (0.0, 40.0), LV_START, t_eval=times,
+                          rtol=1e-12, atol=1e-12)
+    assert np.max(np.abs(paths[:, 0] - reference.y.T)) < 1e-7 * np.max(np.abs(reference.y))
+    constant = lotka_volterra_constant(paths[:, 0, 0], paths[:, 0, 1])
+    assert np.max(np.abs(constant - constant[0])) < 1e-8 * constant[0]
+
+
+def test_trajectories_forward_then_backward_returns_to_the_start():
+    end = ol.trajectories(lotka_volterra, LV_START, (0.0, 10.0), 1000)[1][-1, 0]
+    times, back = ol.trajectories(lotka_volterra, end, (10.0, 0.0), 1000)
+    assert times[0] == 10.0 and times[-1] == 0.0
+    assert back[-1, 0] == pytest.approx(LV_START, rel=1e-9)
+
+
+def test_trajectories_a_path_that_leaves_the_window_becomes_nan():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")                                       # no RuntimeWarning
+        times, paths = ol.trajectories(example_823, [(0.3, 0.0), (0.0, 0.0)], (0.0, 60.0), 6000,
+                                       window=((-1, 1), (-1, 1)))
+    left = np.isnan(paths[:, 0, 0])
+    assert left.any() and np.all(left[np.argmax(left):])                     # NaN from there on
+    assert not np.isinf(paths).any()
+    assert np.all(paths[:, 1] == 0.0)                                        # the equilibrium stays
+    inside = paths[~left, 0]
+    assert np.all(np.abs(inside) <= 3.0)                                     # the window enlarged by 1 size
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        blown = ol.trajectories(lambda x, y: (x ** 2, y), (1.0, 1.0), (0.0, 2.0), 200)[1]   # x blows up at 1
+    assert np.isnan(blown[-1, 0]).all() and not np.isinf(blown).any()
+
+
+def test_trajectories_shapes():
+    times, paths = ol.trajectories(example_811, (0.5, 0.0), (0.0, 1.0), 10)
+    assert times.shape == (11,) and paths.shape == (11, 1, 2)
+    times, paths = ol.trajectories(example_811, [(0.5, 0.0), (0.1, 0.1), (0.0, 0.2)], (0.0, 1.0), 10)
+    assert paths.shape == (11, 3, 2) and paths[0, 2] == pytest.approx([0.0, 0.2])
+    constant = ol.trajectories(lambda x, y: (1.0, 0.0), [(0.0, 0.0), (1.0, 1.0)], (0.0, 2.0), 4)[1]
+    assert constant[-1] == pytest.approx(np.array([[2.0, 0.0], [3.0, 1.0]]))   # constants are broadcast
+
+
+@pytest.mark.parametrize("arguments, words", [
+    (((1, 2, 3),), "starts must be"), (([(1, 2, 3)],), "starts must be"), (((np.nan, 0),), "finite"),
+    (((0, 0), (1.0, 1.0)), "two different ends"), (((0, 0), (0.0, np.inf)), "finite"),
+    (((0, 0), (0.0, 1.0), 0), "positive whole number"), (((0, 0), (0.0, 1.0), 2.5), "positive whole number"),
+    (((0, 0), (0.0, 1.0), ol.MAX_STEPS + 1), "too many steps"),
+    (((0, 0), (0.0, 1.0), 10, ((1, 0), (0, 1))), "window"),
+])
+def test_trajectories_refuse_invalid_input(arguments, words):
+    starts, *rest = arguments
+    if not rest:
+        rest = [(0.0, 1.0)]
+    with pytest.raises(ValueError, match=words):
+        ol.trajectories(example_811, starts, *rest)
+
+
+def test_trajectories_refuse_a_field_of_the_wrong_shape():
+    with pytest.raises(ValueError, match="must return two values"):
+        ol.trajectories(lambda x, y: x + y, [(1, 0), (0, 1), (1, 1)], (0.0, 1.0), 10)    # one array
+    with pytest.raises(ValueError, match="must return two values"):
+        ol.trajectories(lambda x, y: (x, y, x), (1, 0), (0.0, 1.0), 10)
+
+
+def _axes():
+    pytest.importorskip("matplotlib")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    return plt.subplots()
+
+
+def test_direction_field_leaves_out_the_equilibria_and_draws_arrows_of_one_length():
+    fig, ax = _axes()
+    n = 7                                                   # x = -1, -0.5, ..., 2 and y = -1.5, ..., 1.5
+    ol.direction_field(ax, example_811, (-1.0, 2.0), (-1.5, 1.5), n)
+    (arrows,) = ax.collections
+    assert len(arrows.U) == n * n - 2                       # (0, 0) and (1, 0) are equilibria
+    box, (width, height) = ax.get_position(), fig.get_size_inches()
+    sx, sy = box.width * width / 3.0, box.height * height / 3.0       # inches per unit, window 3 x 3
+    on_screen = np.hypot(np.asarray(arrows.U) * sx, np.asarray(arrows.V) * sy)
+    assert on_screen == pytest.approx(np.full(n * n - 2, ol.ARROW_LENGTH * 0.5 * min(sx, sy)))
+    assert arrows.units == "inches"                                    # the shaft in proportion to the arrow
+    assert arrows.width == pytest.approx(ol.ARROW_WIDTH * ol.ARROW_LENGTH * 0.5 * min(sx, sy))
+    assert ax.get_xlim() == (-1.0, 2.0) and ax.get_ylim() == (-1.5, 1.5)
+    fig, ax = _axes()
+    ax.set_aspect("equal")                                  # equal scales: one length in data units
+    ol.direction_field(ax, example_811, (-1.0, 2.0), (-1.5, 1.5), n)
+    (arrows,) = ax.collections
+    lengths = np.hypot(np.asarray(arrows.U), np.asarray(arrows.V))
+    assert lengths == pytest.approx(np.full(n * n - 2, ol.ARROW_LENGTH * 0.5))
+    for bad in (1, 0, 2.5, True):
+        with pytest.raises(ValueError, match="arrows per side"):
+            ol.direction_field(ax, example_811, (-1.0, 2.0), (-1.5, 1.5), bad)
+    for window in (((0.0, np.inf), (0.0, 1.0)), (("a", "b"), (0.0, 1.0))):
+        with pytest.raises(ValueError, match="increasing"):
+            ol.direction_field(ax, example_811, *window)
+
+
+def test_direction_field_with_nan_values_draws_without_a_warning():
+    fig, ax = _axes()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        ol.direction_field(ax, lambda x, y: (np.sqrt(x), 1.0), (-1.0, 1.0), (-1.0, 1.0), 5)
+    assert len(ax.collections[0].U) == 3 * 5                # the columns x = 0, 0.5, 1 only
+    with pytest.raises(ValueError, match="increasing"):
+        ol.direction_field(ax, example_811, (1.0, -1.0), (-1.0, 1.0))
+
+
+def test_phase_portrait_draws_two_lines_per_start_and_checks_its_arguments():
+    fig, ax = _axes()
+    starts = [(0.5, 0.0), (0.2, 0.0), (-0.3, 0.3)]
+    ol.phase_portrait(ax, example_811, starts, (0.0, 5.0), (-1.0, 2.0), (-1.5, 1.5), n_steps=100)
+    assert len(ax.lines) == 2 * len(starts)
+    assert len(ax.texts) == len(starts)                     # one arrowhead on each forward part
+    assert ax.get_xlim() == (-1.0, 2.0) and ax.get_ylim() == (-1.5, 1.5)
+    fig, ax = _axes()
+    ol.phase_portrait(ax, example_811, starts, (0.0, 5.0), (-1.0, 2.0), (-1.5, 1.5), n_steps=100,
+                      both_ways=False)
+    assert len(ax.lines) == len(starts)
+    for t_span in ((0.0, 0.0), (0.0, -1.0)):
+        with pytest.raises(ValueError, match="t1 > t0"):
+            ol.phase_portrait(ax, example_811, starts, t_span, (-1.0, 2.0), (-1.5, 1.5))
+    with pytest.raises(ValueError, match="outside the window"):
+        ol.phase_portrait(ax, example_811, [(3.0, 0.0)], (0.0, 1.0), (-1.0, 2.0), (-1.5, 1.5))
+    with pytest.raises(ValueError, match="increasing"):
+        ol.phase_portrait(ax, example_811, starts, (0.0, 1.0), (2.0, -1.0), (-1.5, 1.5))
+
+
+@pytest.mark.parametrize("answer", ["sink", " Sink ", "SINK", "stable node", "Stable-Node", "stable_node"])
+def test_check_choice_accepts_the_word_in_every_form(capsys, answer):
+    assert ol.check_choice("kind", answer, "sink", ol.PORTRAIT_WORDS, ol.KIND_SYNONYMS) is True
+    assert capsys.readouterr().out == "kind: correct\n"
+
+
+def test_check_choice_other_accepted_forms(capsys):
+    assert ol.check_choice("kind", "spiral-sink", "spiral sink", ol.PORTRAIT_WORDS, ol.KIND_SYNONYMS) is True
+    assert ol.check_choice("kind", "centre", "center", ol.PORTRAIT_WORDS, ol.KIND_SYNONYMS) is True
+    assert ol.check_choice("kind", "Saddle point", "saddle", ol.PORTRAIT_WORDS, ol.KIND_SYNONYMS) is True
+    assert ol.check_choice("stability", "Asymptotically  stable", "asymptotically stable",
+                           ol.STABILITY_WORDS) is True
+    assert capsys.readouterr().out.count("correct") == 4
+
+
+@pytest.mark.parametrize("answer, words", [
+    ("source", "kind: not yet, try again"),
+    (None, "kind: no answer yet (replace None with your answer, a word in quotes)"),
+    (3, 'kind: not yet (type the word in quotes'),
+    (["sink"], 'kind: not yet (type the word in quotes'),
+    ({"sink": 1}, 'kind: not yet (type the word in quotes'),
+    ("spiral", "kind: not yet (not one of the words: source, sink, saddle, center, spiral source, "
+               "spiral sink)"),
+])
+def test_check_choice_refuses_without_revealing_or_raising(capsys, answer, words):
+    assert ol.check_choice("kind", answer, "sink", ol.PORTRAIT_WORDS, ol.KIND_SYNONYMS) is False
+    out = capsys.readouterr().out
+    assert out.startswith(words) and out.count("\n") == 1 and "sink\"" not in out
+
+
+def test_check_choice_refuses_a_mistake_of_the_notebook():
+    with pytest.raises(ValueError):
+        ol.check_choice("kind", "sink", "node", ol.PORTRAIT_WORDS)
+    with pytest.raises(ValueError):
+        ol.check_choice("kind", "sink", None, ol.PORTRAIT_WORDS)
+    with pytest.raises(ValueError, match="list of words"):
+        ol.check_choice("kind", "sink", "sink", ["sink", 3])
+    with pytest.raises(ValueError, match="map words to words"):
+        ol.check_choice("kind", "sink", "sink", ol.PORTRAIT_WORDS, ["stable node"])
+
+
+def test_check_choice_other_books_names_and_a_read_only_table(capsys):
+    assert ol.check_choice("kind", "Stable spiral", "spiral sink", ol.PORTRAIT_WORDS, ol.KIND_SYNONYMS)
+    assert ol.check_choice("kind", "unstable focus", "spiral source", ol.PORTRAIT_WORDS, ol.KIND_SYNONYMS)
+    capsys.readouterr()
+    with pytest.raises(TypeError):
+        ol.KIND_SYNONYMS["node"] = ol.KIND_SINK
+
+
+def test_review_of_notebook_18_library_points():
+    # det J = 0 with tr J > 0 is unstable (an eigenvalue with positive real part): x' = x + y^2, y' = x^2
+    found = ol.classify_equilibrium_2d(lambda x, y: (x + y ** 2, x ** 2), (0, 0))
+    assert found.stability == ol.STABILITY_UNSTABLE and found.reason == ol.REASON_SINGULAR_UNSTABLE
+    # a shape that has the right count but not the right form gets its own message
+    with pytest.raises(ValueError, match="an array of shape"):
+        ol.jacobian(lambda x, y: ([x], [y]), (1, 1))
+    # windows that are not two increasing finite ranges
+    for window in (((0, 1),), (("a", "b"), (0, 1)), ((0, np.inf), (0, 1))):
+        with pytest.raises(ValueError, match="window"):
+            ol.trajectories(example_811, (0.5, 0.0), (0.0, 1.0), 10, window)

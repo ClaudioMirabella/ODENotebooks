@@ -36,7 +36,7 @@ notebooks and `odelib.py` (an allow-list: nothing else of the repository can rea
 site); (3) downloads, once, the Python runtime (Pyodide 314.0.6) and the 29 packages the notebooks
 need, checking each file against its published SHA-256; (4) builds JupyterLite; (5) makes the site
 self-contained (runtime and packages served by the site, fall-back to PyPI switched off);
-(6) writes the home page. Result: about 127 MB of static files.
+(6) writes the home page. Result: about 135 MB of static files (23 notebooks, 2026-11-20).
 
 Stop `serve_site.py` before rebuilding: on Windows a running server (or a terminal whose current
 folder is `_output`) keeps the folder locked, and the script says so.
@@ -103,6 +103,11 @@ All cells run, without errors, using only files of the site:
 | 11 Linear first-order equations (2026-11-17) | 19 | 9 | 1 |
 | 12 Exact equations and substitutions (2026-11-17) | 18 | 5 | 1 |
 | 13 First-order models (2026-11-17) | 17 | 9 | 4 |
+| 14 Non-homogeneous equations (2026-11-20) | 16 | 9 | 3 |
+| 15 Forced vibrations (2026-11-20) | 15 | 8 | 3 |
+| 16 Higher order, boundary values (2026-11-20) | 15 | 7 | 3 |
+| 17 Linear systems (2026-11-20) | 19 | 12 | 2 |
+| 18 The phase plane and nonlinear systems (2026-11-20) | 20 | 13 | 2 |
 
 Moving a slider from the keyboard redraws its plot (notebooks 04 and 08 to 13). Notebook 08 is listed
 first on the home page ("Start here if you are new to Python"); its answers block is collapsed. The server log shows every Python
@@ -129,5 +134,6 @@ For Chrome, Edge, Firefox and Safari; a Windows laptop, a Mac, a Chromebook, a t
 Every notebook is opened in a fresh browser profile (a first visit), all cells are run by the
 Python in the browser, and the check fails if a cell stops with an error, if a notebook does not
 finish, or if the page asks another host for a file. It drives a browser already installed
-(Edge or Chrome): nothing is downloaded. Last run (2026-11-17): 13 of 13 notebooks, 12-14 s each.
+(Edge or Chrome): nothing is downloaded. Last run (2026-11-20): 23 of 23 notebooks (the 00 guide,
+01-18 and the four optional E notebooks), 14-19 s each, 6.8 min in all.
 Run it after every build.

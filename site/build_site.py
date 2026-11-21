@@ -58,6 +58,8 @@ READING_ORDER = (
     ("Week 6 - Second-order linear equations (Sessions 11-12)", ("05", "06", "05E")),
     ("Week 7 - Non-homogeneous equations and vibrations (Sessions 13-14)", ("14", "07", "07E")),
     ("Week 8 - Forced vibrations; higher order and boundary values (Sessions 15-16)", ("15", "16")),
+    ("Week 9 - Linear systems and the eigenvalue method (Sessions 17-18)", ("17",)),
+    ("Week 10 - The phase plane and nonlinear systems (Sessions 19-20)", ("18",)),
 )
 UNPLACED_HEADING = "More notebooks"         # anything new that READING_ORDER does not mention yet
 EXTRA_FILES = ("odelib.py",)

@@ -11,6 +11,7 @@ Contents
 --------
 Analytical solutions
     exponential_solution          P(t) = P0 e^{k (t - t0)}                   (Lebl 0.2, 1.1)
+    growth_rate_from_two_values   k = ln(P2/P1) / (t2 - t1)                   (notebook 01)
     decay_constant, half_life     lambda = ln 2 / tau                                (decay law)
     age_from_fraction             t = -ln(fraction) / lambda                       (radiocarbon dating)
     logistic_solution             x' = k x (M - x)                            (Lebl 1.6)
@@ -25,29 +26,77 @@ Numerical methods (fixed step)
     euler, heun, rk4              one-step methods for y' = f(t, y)           (Lebl 1.7)
     observed_order                order of convergence from successive errors
     solution_curve                the solution through a point, both ways, inside a window
-Plotting
+Plotting and first-order stability
     slope_field                   short segments of slope f(t, y)             (Lebl 1.2)
     phase_line                    critical points and arrows of x' = f(x)     (Lebl 1.6)
+    classify_equilibrium          stable / unstable / inconclusive from f'(x*) (Lebl 1.6)
 Second-order linear equations
     characteristic_roots          roots of a r^2 + b r + c = 0                (Lebl 2.2)
     constant_coefficient_solution exact y(t) of a y'' + b y' + c y = 0, any a, b, c (Lebl 2.2)
     damping_regime                over-, critically, under-damped, undamped   (Lebl 2.4)
     free_response                 exact x(t) of m x'' + c x' + k x = 0         (Lebl 2.2, 2.4)
+    forced_response               a y'' + b y' + c y = f(t), variation of parameters (Lebl 2.5; notebook 14)
+    root_multiplicity             how often alpha + i beta is a characteristic root (Lebl 2.5)
+    steady_state,                 the steady periodic solution and its peak    (Lebl 2.6; notebook 15)
+    practical_resonance
+    cosine_forced_response        m x'' + c x' + k x = F0 cos(omega t), beats and resonance (Lebl 2.6)
     wronskian_values              W = y1 y2' - y1' y2 from sampled values     (notebook 05)
+Equations of order n, boundary value problems (notebook 16)
+    higher_order_solution         a_n y^(n) + ... + a_0 y = 0 with n initial values (Lebl 2.3)
+    classify_linear_system        one, none or infinitely many solutions of M C = b (Lebl 4.1)
+    beam_deflection               EI y'''' = w(x) with two conditions at each end
+Linear systems x' = A x (notebook 17)
+    companion_matrix              the system u' = A u of an equation of order n (Lebl 3.1)
+    two_by_two_case, TwoByTwoCase the case, eigenvalues and eigenvectors of a 2 x 2 matrix (Lebl 3.4, 3.7)
+    eigen_solution                x(t) for a 2 x 2 matrix by the eigenvalue method (Lebl 3.4, 3.7)
+The phase plane (notebook 18)
+    classify_linear_2d, PhaseType the picture of x' = A x at the origin, from tr A and det A (Lebl 3.5)
+    jacobian                      the Jacobian matrix of f at a point, by central differences (Lebl 8.1)
+    classify_equilibrium_2d,      an equilibrium of x' = f(x, y), y' = g(x, y) by its linearization
+      EquilibriumType             (Lebl 8.2)
+    trajectories                  the solutions from several starts at once, by RK4 (notebook 04)
+    direction_field               arrows along (f, g) on a grid, all of one length (Lebl 3.1)
+    phase_portrait                the trajectories through given points, both ways in time (Lebl 3.5, 8.1)
 Exercises
     check                         compare an answer found by hand with the expected one
     check_formula                 the same for a formula typed as a SymPy expression
+    check_solution                a formula checked by substituting it in the equation
+    check_vector                  a vector or a matrix; an eigenvector up to a factor
+    check_choice                  a word, such as "saddle", with Lebl's synonyms
+Help for beginners
+    guide                         the student guide (also on the home page of the site)
+    hint_for                      one sentence of advice under a beginner's error message
+Named constants (each defined once, above the function that uses it): GRAVITY, MAX_STEPS, CURVE_STEP,
+STEEP_FRACTION, QUAD_LIMIT, ROOT_ROUNDING, NEGLIGIBLE_DAMPING, SUPPORTS, BEAM_MARGIN,
+REPEATED_EIGENVALUE_RTOL, CASE_REAL, CASE_COMPLEX, CASE_REPEATED_TWO, CASE_REPEATED_ONE, SYSTEM_SIZE,
+LARGER_SYSTEMS, KIND_SADDLE, KIND_SOURCE, KIND_SINK, KIND_SPIRAL_SOURCE, KIND_SPIRAL_SINK, KIND_CENTER,
+KIND_DEGENERATE_SOURCE, KIND_DEGENERATE_SINK, KIND_STAR_SOURCE, KIND_STAR_SINK, KIND_LINE_OF_EQUILIBRIA,
+KIND_PARALLEL_LINES, KIND_ALL_EQUILIBRIA, STABILITY_ASYMPTOTIC, STABILITY_STABLE, STABILITY_UNSTABLE,
+STABILITY_INCONCLUSIVE, JACOBIAN_STEP, LINEARIZATION_RTOL, EQUILIBRIUM_TOL, REASON_LINEAR, REASON_CENTER,
+REASON_SINGULAR, REASON_SINGULAR_UNSTABLE, PORTRAIT_STEPS, ESCAPE_MARGIN, DIRECTION_GRID, ARROW_LENGTH,
+MIN_GRID, ARROW_WIDTH, TRAJECTORY_ARROW_AT,
+TRAJECTORY_WIDTH, START_DOT_SIZE, ARROW_HEAD_SIZE, ARROW_HEAD_SPAN, CHECK_TOLERANCE, ROUNDED, FORMULA_SAMPLES,
+RESIDUAL_ROUNDING, PORTRAIT_WORDS, STABILITY_WORDS, KIND_SYNONYMS; the guide and the hints:
+GUIDE_START, GUIDE_TYPING, GUIDE_TYPING_RULE, GUIDE_ERRORS, GUIDE_HOW, GUIDE_WORDS, GUIDE_TOPICS,
+GUIDE_WIDTH, HINT_LABEL, FUNCTION_NAMES, CONSTANT_NAMES, WORD_NAMES, SETUP_NAMES, GUIDE_PARTS_TYPED,
+RUN_ALL, SAMPLE, HINTS_INSTALLED.
 
 Error handling: invalid arguments raise ``ValueError`` (never a silent NaN), with one
 documented exception: ``logistic_solution`` returns NaN for times at or beyond the
-blow-up time, where the solution does not exist.
+blow-up time, where the solution does not exist (and, by design, ``trajectories`` gives NaN for
+the points of a path after it has left the window of the picture).
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from types import MappingProxyType
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
+
+if TYPE_CHECKING:                       # for the type hints only: matplotlib is not imported at the top
+    from matplotlib.axes import Axes
 
 ArrayLike = float | Sequence[float] | np.ndarray
 RHS = Callable[[float, np.ndarray], np.ndarray]
@@ -883,6 +932,686 @@ def wronskian_values(y1: ArrayLike, dy1: ArrayLike, y2: ArrayLike, dy2: ArrayLik
 
 
 # ---------------------------------------------------------------------------
+# Linear systems x' = A x (notebook 17; Lebl, Sections 3.1-3.4, 3.7, 3.8)
+# ---------------------------------------------------------------------------
+# A 2 x 2 matrix has a repeated eigenvalue when its discriminant trace^2 - 4 det is zero; in a computer
+# it is taken as zero when |discriminant| <= REPEATED_EIGENVALUE_RTOL * s^2, s the largest size of an
+# entry. Near a repeated eigenvalue the error made by using the repeated formula grows like the
+# discriminant times t^2 (times t^3 for the part along (A - lambda I) x0), so with this value it stays
+# below 1e-9 when s t is at most about 20 (the windows of the notebook), while the formulas of the
+# other two cases, used just outside the band, lose at most about 1e-10 to cancellation.
+REPEATED_EIGENVALUE_RTOL = 1e-12
+CASE_REAL = "real distinct"
+CASE_COMPLEX = "complex pair"
+CASE_REPEATED_TWO = "repeated, two eigenvectors"
+CASE_REPEATED_ONE = "repeated, one eigenvector"
+SYSTEM_SIZE = 2                 # the size of the systems solved by the formulas of eigen_solution
+LARGER_SYSTEMS = "for a larger system use scipy.linalg.expm(t * A) @ x0"
+MatrixLike = Sequence[Sequence[float]] | np.ndarray
+
+
+class TwoByTwoCase(NamedTuple):
+    """What a student computes by hand for a real 2 x 2 matrix A (see ``two_by_two_case``)."""
+
+    case: str                       # CASE_REAL, CASE_COMPLEX, CASE_REPEATED_TWO or CASE_REPEATED_ONE
+    trace: float                    # a11 + a22
+    determinant: float              # a11 a22 - a12 a21
+    discriminant: float             # trace^2 - 4 determinant
+    eigenvalues: tuple[float, float] | tuple[complex, complex]   # complex: alpha + i beta first, beta > 0
+    eigenvectors: tuple[np.ndarray, ...]                          # one array for each independent eigenvector
+    generalized: np.ndarray | None  # w with (A - lambda I) w = v, only in the case CASE_REPEATED_ONE
+
+
+def companion_matrix(coefficients: Sequence[float]) -> np.ndarray:
+    """The matrix A of the system u' = A u that is the equation a_n y^(n) + ... + a_1 y' + a_0 y = 0.
+
+    Lebl, Section 3.1 (the change to first order, (3.1.8) and Example 3.1.4), used in notebook 17:
+    with u1 = y, u2 = y', ..., un = y^(n-1), the linear homogeneous equation of order n with constant
+    coefficients is the same problem as the system of n equations of order 1
+        u1' = u2,  ...,  u_(n-1)' = u_n,  u_n' = -(a_0 u1 + a_1 u2 + ... + a_(n-1) u_n) / a_n.
+    ``coefficients`` are a_n, ..., a_1, a_0, the highest derivative first, as for ``numpy.roots`` and
+    ``higher_order_solution``. Rows 1 to n - 1 hold a 1 just above the diagonal; the last row is
+    -(a_0, ..., a_(n-1)) / a_n. Its eigenvalues are the roots of the characteristic equation
+    a_n r^n + ... + a_0 = 0 (Lebl's note after Example 3.4.4). The function is unit-free: an entry
+    of row n has the units of y^(n) divided by those of y^(k-1).
+    """
+    try:
+        a = np.asarray(coefficients, dtype=float)
+    except (TypeError, ValueError):
+        a = None
+    if a is None or a.ndim != 1 or a.size < 2 or not np.all(np.isfinite(a)) or a[0] == 0:
+        raise ValueError("coefficients must be one flat list a_n, ..., a_1, a_0 of at least two finite "
+                         "numbers, with a_n (the coefficient of the highest derivative) not zero")
+    order = a.size - 1
+    matrix = np.zeros((order, order))
+    matrix[:-1, 1:] = np.eye(order - 1)                   # u_k' = u_(k+1)
+    with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+        matrix[-1, :] = -a[:0:-1] / a[0]                  # u_n' = -(a_0 u1 + ... + a_(n-1) u_n) / a_n
+    if not np.all(np.isfinite(matrix)):
+        raise ValueError("a_n is too small compared with the other coefficients: "
+                         "divide the equation by a larger number")
+    return matrix
+
+
+def _real_two_by_two(matrix: MatrixLike, advice: str) -> np.ndarray:
+    """The matrix as a 2 x 2 array of finite real numbers, or a ValueError that says what is wrong."""
+    try:
+        raw = np.asarray(matrix)
+    except (TypeError, ValueError):                       # rows of different lengths
+        raw = None
+    if raw is not None and np.iscomplexobj(raw):
+        raise ValueError("the entries of the matrix must be real numbers (no complex entries)")
+    try:
+        A = None if raw is None else raw.astype(float)
+    except (TypeError, ValueError):                       # text, or a symbol
+        A = None
+    if A is None:
+        raise ValueError("a 2 x 2 matrix of numbers is expected, typed as two rows: "
+                         f"[[a11, a12], [a21, a22]]; {advice}")
+    if A.shape != (SYSTEM_SIZE, SYSTEM_SIZE):
+        raise ValueError("a 2 x 2 matrix is expected, typed as two rows: [[a11, a12], [a21, a22]] "
+                         f"(got shape {A.shape}); {advice}")
+    if not np.all(np.isfinite(A)):
+        raise ValueError("the entries of the matrix must be finite numbers")
+    return A
+
+
+def _shortcut_eigenvector(A: np.ndarray, eigenvalue: complex | float) -> np.ndarray:
+    """An eigenvector of A for ``eigenvalue`` without row reduction (notebook 17, Section 2).
+
+    From the first row (a11 - lambda) v1 + a12 v2 = 0 the vector (a12, lambda - a11) works, and from
+    the second row (lambda - a22, a21); the longer of the two is returned, so a triangular or diagonal
+    matrix (where one of them is the zero vector) is handled too.
+    """
+    (a11, a12), (a21, a22) = A
+    first = np.array([a12, eigenvalue - a11])
+    second = np.array([eigenvalue - a22, a21])
+    return second if np.linalg.norm(second) > np.linalg.norm(first) else first
+
+
+def two_by_two_case(matrix: MatrixLike, rtol: float = REPEATED_EIGENVALUE_RTOL) -> TwoByTwoCase:
+    """The case of a real 2 x 2 matrix A = [[a11, a12], [a21, a22]] and what is computed for it by hand.
+
+    Lebl, Section 3.4 (eigenvalue method, the 2 x 2 shortcut after Example 3.4.3, complex eigenvalues)
+    and Section 3.7 (Example 3.7.1), used in notebook 17. The eigenvalues are the roots of
+    lambda^2 - (trace) lambda + det = 0, and the case is decided by the discriminant
+    trace^2 - 4 det (computed as (a11 - a22)^2 + 4 a12 a21, the same number with less rounding):
+      * CASE_REAL, "real distinct": eigenvalues lambda1 < lambda2, one eigenvector each, from the
+        shortcut (a12, lambda - a11) of the first row or (lambda - a22, a21) of the second, the longer;
+      * CASE_COMPLEX, "complex pair": eigenvalues (alpha + i beta, alpha - i beta) with beta > 0, as
+        complex numbers, and the eigenvectors (v, conj v);
+      * CASE_REPEATED_TWO, "repeated, two eigenvectors": A = lambda I (a12 = a21 = 0), eigenvectors
+        (1, 0) and (0, 1);
+      * CASE_REPEATED_ONE, "repeated, one eigenvector": v is the longer column j of A - lambda I, and
+        ``generalized`` is w = e_j (1 in place j), so that (A - lambda I) w = v holds exactly; for
+        [[3, 1], [0, 3]] this gives Lebl's v = (1, 0) and w = (0, 1).
+    The eigenvalue is taken as repeated when |discriminant| <= rtol * s^2, s the largest size of an
+    entry (REPEATED_EIGENVALUE_RTOL explains the value); the test is made on A / s, so that very small
+    or very large entries are judged alike (the eigenvectors are those of the shortcut on A itself).
+    Inside that band a diagonal matrix (a12 = a21 = 0) is "two eigenvectors", even if a11 and a22
+    differ by rounding. The entries may have any units of 1/time: the eigenvalues have the same units.
+    """
+    rtol = _require_positive("rtol", rtol)
+    A = _real_two_by_two(matrix, "for a larger matrix use np.linalg.eig or sp.Matrix(...).eigenvects()")
+    (a11, a12), (a21, a22) = A
+    with np.errstate(over="ignore", invalid="ignore"):
+        trace, determinant = float(a11 + a22), float(a11 * a22 - a12 * a21)
+        discriminant = float((a11 - a22) ** 2 + 4 * a12 * a21)
+    size = float(np.max(np.abs(A)))
+    scaled = A / size if size > 0 else A                  # the case is decided on entries of size 1
+    (p11, p12), (p21, p22) = scaled
+    trace_s, determinant_s = p11 + p22, p11 * p22 - p12 * p21
+    discriminant_s = (p11 - p22) ** 2 + 4 * p12 * p21
+    if abs(discriminant_s) <= rtol:
+        eigenvalue = float(trace_s / 2 * size) + 0.0
+        if a12 == 0 and a21 == 0:
+            return TwoByTwoCase(CASE_REPEATED_TWO, trace, determinant, discriminant, (eigenvalue, eigenvalue),
+                                (np.array([1.0, 0.0]), np.array([0.0, 1.0])), None)
+        shifted = A - eigenvalue * np.eye(SYSTEM_SIZE)
+        column = int(np.argmax(np.linalg.norm(shifted, axis=0)))
+        return TwoByTwoCase(CASE_REPEATED_ONE, trace, determinant, discriminant, (eigenvalue, eigenvalue),
+                            (shifted[:, column].copy(),), np.eye(SYSTEM_SIZE)[column])
+    root = np.sqrt(abs(discriminant_s))
+    if discriminant_s > 0:
+        larger = (trace_s + root) / 2 if trace_s >= 0 else (trace_s - root) / 2   # no cancellation
+        smaller = determinant_s / larger                                         # the product is det
+        low, high = sorted((larger, smaller))
+        vectors = (_shortcut_eigenvector(scaled, low) * size, _shortcut_eigenvector(scaled, high) * size)
+        low, high = (float(value * size) + 0.0 for value in (low, high))      # + 0.0: no -0.0
+        return TwoByTwoCase(CASE_REAL, trace, determinant, discriminant, (low, high), vectors, None)
+    eigenvalue = complex(trace_s / 2, root / 2)
+    vector = _shortcut_eigenvector(scaled, eigenvalue) * size     # the shortcut of A itself
+    eigenvalue = eigenvalue * size
+    return TwoByTwoCase(CASE_COMPLEX, trace, determinant, discriminant, (eigenvalue, eigenvalue.conjugate()),
+                        (vector, vector.conj()), None)
+
+
+def _scaled_by(exponential: np.ndarray, amount: np.ndarray) -> np.ndarray:
+    """exponential * amount, with 0 where amount is 0 (so an overflow times 0 is 0, not NaN)."""
+    with np.errstate(over="ignore", invalid="ignore"):
+        return np.where(amount == 0, 0.0, exponential * amount)
+
+
+def eigen_solution(t: ArrayLike, matrix: MatrixLike, x0: Sequence[float],
+                   rtol: float = REPEATED_EIGENVALUE_RTOL) -> np.ndarray:
+    """The solution of x' = A x, x(0) = x0, for a real 2 x 2 matrix A, by the formula of its case.
+
+    Lebl, Theorems 3.4.1 and 3.4.2 and formula (3.7.1), used in notebook 17 (the case and the
+    vectors come from ``two_by_two_case``):
+      * real distinct:   x = C1 v1 e^(lambda1 t) + C2 v2 e^(lambda2 t);
+      * complex pair:    x = C1 Re(v e^(lambda t)) + C2 Im(v e^(lambda t)), lambda = alpha + i beta,
+                         beta > 0;
+      * A = lambda I:    x = e^(lambda t) x0;
+      * one eigenvector: x = C1 v e^(lambda t) + C2 (w + v t) e^(lambda t).
+    The constants come from X(0) C = x0, X(0) the matrix whose columns are the two solutions at t = 0
+    (``np.linalg.solve``). In the last case C1 v + C2 w = x0 and C2 v = (A - lambda I) x0, so the
+    formula is evaluated as e^(lambda t) (x0 + t (A - lambda I) x0): the same function, which stays
+    exact when rounding leaves (A - lambda I)^2 slightly different from zero; the case A = lambda I is
+    evaluated the same way (there A - lambda I = 0, or is zero up to rounding). A term whose constant
+    is 0 is 0, also where its exponential overflows.
+    Returns a real array of shape ``t.shape + (2,)``: the last index j holds x_(j+1), the layout of
+    ``rk4``. Units: t in the time unit of the rates in A (A has units 1/time), x in the units of x0.
+    """
+    A = _real_two_by_two(matrix, LARGER_SYSTEMS)
+    found = two_by_two_case(A, rtol)
+    try:
+        start = np.asarray(x0, dtype=float)
+    except (TypeError, ValueError):
+        start = None
+    if start is None or start.shape != (SYSTEM_SIZE,) or not np.all(np.isfinite(start)):
+        raise ValueError(f"x0 must be a list of {SYSTEM_SIZE} finite numbers, "
+                         "the values of x1 and x2 at t = 0")
+    times = np.asarray(t, dtype=float)
+    if not np.all(np.isfinite(times)):
+        raise ValueError("t must contain finite numbers")
+    column = times[..., np.newaxis]                       # one row of the result for each time
+    if not np.any(start):
+        return np.zeros(times.shape + (SYSTEM_SIZE,))     # x0 = 0 stays 0
+    with np.errstate(over="ignore", invalid="ignore"):
+        if found.case == CASE_REAL:
+            first, second = found.eigenvectors
+            C = np.linalg.solve(np.column_stack([first, second]), start)
+            values = (_scaled_by(np.exp(found.eigenvalues[0] * column), C[0] * first)
+                      + _scaled_by(np.exp(found.eigenvalues[1] * column), C[1] * second))
+        elif found.case == CASE_COMPLEX:
+            real_part, imaginary_part = found.eigenvectors[0].real, found.eigenvectors[0].imag
+            alpha, beta = found.eigenvalues[0].real, found.eigenvalues[0].imag
+            C = np.linalg.solve(np.column_stack([real_part, imaginary_part]), start)
+            cosine, sine = np.cos(beta * column), np.sin(beta * column)
+            values = _scaled_by(np.exp(alpha * column), C[0] * (real_part * cosine - imaginary_part * sine)
+                                + C[1] * (real_part * sine + imaginary_part * cosine))
+        else:                                             # repeated: one eigenvector, or A = lambda I
+            eigenvalue = found.eigenvalues[0]
+            along = (A - eigenvalue * np.eye(SYSTEM_SIZE)) @ start       # C2 v
+            values = _scaled_by(np.exp(eigenvalue * column), start + column * along)
+    if not np.all(np.isfinite(values)):
+        raise ValueError("the solution is too large to be computed at these times")
+    return values
+
+
+# ---------------------------------------------------------------------------
+# The phase plane and nonlinear systems (notebook 18; Lebl, Sections 3.5, 8.1-8.3)
+# ---------------------------------------------------------------------------
+# A system in the plane is passed everywhere in one form, Lebl's: f(x, y) returns the pair
+# (f(x, y), g(x, y)) of the right-hand sides of x' = f(x, y), y' = g(x, y), and works on NumPy arrays.
+Field = Callable[[np.ndarray, np.ndarray], tuple[ArrayLike, ArrayLike]]
+
+# The pictures of x' = A x at the origin, with Lebl's words (Section 3.5, Table 3.5.1) and the
+# borderline cases of his Exercises 3.5.2, 3.5.3 and 3.5.8.
+KIND_SADDLE = "saddle"
+KIND_SOURCE = "source"
+KIND_SINK = "sink"
+KIND_SPIRAL_SOURCE = "spiral source"
+KIND_SPIRAL_SINK = "spiral sink"
+KIND_CENTER = "center"
+KIND_DEGENERATE_SOURCE = "degenerate source"      # eigenvalue > 0 twice, one eigenvector
+KIND_DEGENERATE_SINK = "degenerate sink"          # eigenvalue < 0 twice, one eigenvector
+KIND_STAR_SOURCE = "star source"                  # A = lambda I, lambda > 0
+KIND_STAR_SINK = "star sink"                      # A = lambda I, lambda < 0
+KIND_LINE_OF_EQUILIBRIA = "line of equilibria"    # one eigenvalue 0
+KIND_PARALLEL_LINES = "parallel lines"            # the eigenvalue 0 twice, A not 0
+KIND_ALL_EQUILIBRIA = "all equilibria"            # A = 0
+# Stability of an equilibrium (Lebl, Section 8.2.2) and the word of classify_equilibrium (notebook 03)
+STABILITY_ASYMPTOTIC = "asymptotically stable"
+STABILITY_STABLE = "stable"
+STABILITY_UNSTABLE = "unstable"
+STABILITY_INCONCLUSIVE = "inconclusive"
+_SINKS = (KIND_SINK, KIND_SPIRAL_SINK, KIND_DEGENERATE_SINK, KIND_STAR_SINK)
+
+
+class PhaseType(NamedTuple):
+    """The picture of x' = A x at the origin (see ``classify_linear_2d``)."""
+
+    kind: str                       # one of the KIND_... words
+    stability: str                  # STABILITY_ASYMPTOTIC, STABILITY_STABLE or STABILITY_UNSTABLE
+    trace: float                    # a11 + a22 = lambda1 + lambda2
+    determinant: float              # a11 a22 - a12 a21 = lambda1 lambda2
+    eigenvalues: tuple[float, float] | tuple[complex, complex]   # as in two_by_two_case
+    case: str                       # the case of two_by_two_case (CASE_REAL, CASE_COMPLEX, ...)
+
+
+def classify_linear_2d(matrix: MatrixLike, rtol: float = REPEATED_EIGENVALUE_RTOL) -> PhaseType:
+    """The picture of x' = A x near the origin, for a real 2 x 2 matrix A, from tr A and det A.
+
+    Lebl, Section 3.5 (Table 3.5.1 and the six cases) and the borderline cases of Exercises 3.5.2,
+    3.5.3 and 3.5.8, used in notebook 18. Not to be confused with ``classify_linear_system``
+    (notebook 16, algebraic systems M C = b). A thin wrapper of ``two_by_two_case``: it is called once
+    (the validation, the repeated band, the eigenvalues and the case come from it) and only the map
+    to a picture is added. With lambda1 + lambda2 = tr A and lambda1 lambda2 = det A:
+      * det A < 0: "saddle" (real eigenvalues of opposite signs);
+      * det A > 0, real eigenvalues: "source" if tr A > 0, "sink" if tr A < 0; the same eigenvalue
+        twice: "degenerate source" / "degenerate sink" (one eigenvector) or "star source" /
+        "star sink" (A = lambda I);
+      * det A > 0, complex eigenvalues alpha +- i beta, alpha = tr A / 2: "spiral source" (tr A > 0),
+        "spiral sink" (tr A < 0), "center" (tr A = 0);
+      * det A = 0, an eigenvalue 0: "line of equilibria" (tr A not 0), "parallel lines" (tr A = 0,
+        A not 0, Lebl's Exercise 3.5.8), "all equilibria" (A = 0).
+    The stability (Lebl, Section 8.2.2): STABILITY_ASYMPTOTIC for the four sinks; STABILITY_STABLE for a
+    center, a line of equilibria that attracts (tr A < 0) and A = 0; STABILITY_UNSTABLE for the rest.
+    As for the discriminant in ``two_by_two_case``, det A and tr A are taken as 0 when
+    |det A| <= rtol s^2 and |tr A| <= rtol s, s the largest size of an entry (decided on A / s, so the
+    unit does not matter). Units: the entries of A in 1/time, as for ``eigen_solution``; the kind does
+    not depend on the unit. ValueError: those of ``two_by_two_case`` (not 2 x 2, complex or non-finite
+    entries, rtol not positive).
+    """
+    found = two_by_two_case(matrix, rtol)
+    A = np.asarray(matrix, dtype=float)                   # accepted by two_by_two_case just above
+    size = float(np.max(np.abs(A)))
+    if size == 0:
+        return PhaseType(KIND_ALL_EQUILIBRIA, STABILITY_STABLE, found.trace, found.determinant,
+                         found.eigenvalues, found.case)
+    (p11, p12), (p21, p22) = A / size                     # entries of size at most 1
+    trace_s, determinant_s = p11 + p22, p11 * p22 - p12 * p21
+    no_trace = abs(trace_s) <= rtol
+    if abs(determinant_s) <= rtol:                        # an eigenvalue 0; the other is tr A
+        kind = KIND_PARALLEL_LINES if no_trace else KIND_LINE_OF_EQUILIBRIA
+    elif determinant_s < 0:
+        kind = KIND_SADDLE
+    elif found.case == CASE_COMPLEX:
+        kind = KIND_CENTER if no_trace else KIND_SPIRAL_SOURCE if trace_s > 0 else KIND_SPIRAL_SINK
+    elif found.case == CASE_REAL:                         # det A > 0: here |tr A| > 2 sqrt(det A) > 0
+        kind = KIND_SOURCE if trace_s > 0 else KIND_SINK
+    elif found.case == CASE_REPEATED_ONE:
+        kind = KIND_DEGENERATE_SOURCE if trace_s > 0 else KIND_DEGENERATE_SINK
+    else:                                                 # CASE_REPEATED_TWO: A = lambda I
+        kind = KIND_STAR_SOURCE if trace_s > 0 else KIND_STAR_SINK
+    if kind in _SINKS:
+        stability = STABILITY_ASYMPTOTIC
+    elif kind == KIND_CENTER or (kind == KIND_LINE_OF_EQUILIBRIA and trace_s < 0):   # towards the line
+        stability = STABILITY_STABLE
+    else:
+        stability = STABILITY_UNSTABLE
+    return PhaseType(kind, stability, found.trace, found.determinant, found.eigenvalues, found.case)
+
+
+# A central difference (F(p + h) - F(p - h)) / (2 h) has an error of about h^2 times the third
+# derivative, plus the rounding of F, about 1e-16 / h: with h = 1e-5 both are near 1e-10 for functions
+# that vary on the scale max(1, |point|), such as the polynomials, exponentials and the pendulum of the
+# course near the origin; far from the origin an oscillating f loses accuracy like (h |p|)^2 (the step
+# is h max(1, |p_j|)): about 1e-7 relative for sin(3x) at |p| = 20.
+JACOBIAN_STEP = 1e-5
+
+
+def _flat_point(point: Sequence[float], size: int | None = None) -> np.ndarray:
+    """The point as a flat float array of finite numbers (of ``size`` coordinates), or a ValueError."""
+    try:
+        p = np.asarray(point, dtype=float)
+    except (TypeError, ValueError):                       # text, a symbol, rows of different lengths
+        p = None
+    wanted = "coordinates" if size is None else f"{size} coordinates"
+    if p is None or p.ndim != 1 or p.size == 0 or (size is not None and p.size != size):
+        raise ValueError(f"the point must be one flat list of {wanted}, for example (1.0, 0.0)")
+    if not np.all(np.isfinite(p)):
+        raise ValueError("the coordinates of the point must be finite numbers")
+    return p
+
+
+def _values_at(f: Callable[..., Sequence[float]], p: np.ndarray, near: str) -> np.ndarray:
+    """f(*p) as a float array of p.size finite numbers, or a ValueError that says which value is wrong."""
+    with np.errstate(all="ignore"):                       # a value that is not finite is reported below
+        result = f(*p)
+    try:
+        values = np.asarray(result, dtype=float)
+    except (TypeError, ValueError):
+        values = None
+    if values is None or values.shape != p.shape:
+        got = ("something else" if values is None else f"{values.size} value(s)" if values.size != p.size
+               else f"an array of shape {values.shape}")
+        raise ValueError(f"f must return {p.size} numbers, one for each coordinate of the point; got {got}")
+    bad = np.flatnonzero(~np.isfinite(values))
+    if bad.size:
+        raise ValueError(f"value number {bad[0] + 1} of f is not a finite number {near}")
+    return values
+
+
+def jacobian(f: Callable[..., Sequence[float]], point: Sequence[float],
+             h: float = JACOBIAN_STEP) -> np.ndarray:
+    """The Jacobian matrix of f at ``point`` by central differences (Lebl, Section 8.1.2; notebook 18).
+
+    Entry (i, j) is the partial derivative of f_i with respect to the coordinate j: the derivative in
+    that coordinate with the others held fixed. Column j is (F(p + h_j e_j) - F(p - h_j e_j)) / (2 h_j),
+    with h_j = h max(1, |p_j|) (JACOBIAN_STEP explains the value) and e_j the unit vector of coordinate j.
+    f is called as f(*point): f(x, y) returning (f(x, y), g(x, y)) in the plane, f(x, y, z) in three
+    dimensions (Lebl's Exercise 8.1.9). Returns an n x n float array. Units: entry (i, j) has the units of
+    f_i divided by those of the coordinate j (1/time for a system x' = f(x, y) whose x and y have the
+    same units). ValueError: a point that is not a flat list of finite numbers; f returning a number of
+    values different from the number of coordinates; a value that is not finite at or near the point
+    (the message names the coordinate); h not positive. An error raised inside f is not caught: it is
+    the message of the function that was passed.
+    """
+    h = _require_positive("h", h)
+    p = _flat_point(point)
+    _values_at(f, p, "at the point")
+    columns = []
+    for j in range(p.size):
+        step = h * max(1.0, abs(p[j]))
+        plus, minus = p.copy(), p.copy()
+        plus[j] += step
+        minus[j] -= step
+        near = f"near the point (coordinate {j + 1} moved by {step:.1g})"
+        columns.append((_values_at(f, plus, near) - _values_at(f, minus, near)) / (2 * step))
+    return np.column_stack(columns)
+
+
+# The entries of a central-difference Jacobian carry an error of about 1e-9 relative, so its trace,
+# determinant and discriminant are trusted to about 1e-9: a band a hundred times wider never takes
+# rounding for a sign, and a true nonzero trace of a model of the course is far larger.
+LINEARIZATION_RTOL = 1e-7
+EQUILIBRIUM_TOL = 1e-9          # |f| and |g| allowed at an equilibrium, relative to |J| max(1, |point|)
+REASON_LINEAR = ("no eigenvalue has real part 0: near the point the system has the stability of its "
+                 "linearization (Lebl, Table 8.2.1)")
+REASON_CENTER = "the linearization is a center: the nonlinear terms decide (Lebl, Section 8.2.3)"
+REASON_SINGULAR = "det J = 0: not almost linear, the linearization decides nothing (Lebl, Section 8.2.1)"
+REASON_SINGULAR_UNSTABLE = ("det J = 0, but the other eigenvalue tr J is positive: unstable; the picture is "
+                            "not decided (not almost linear, Lebl, Section 8.2.1)")
+
+
+class EquilibriumType(NamedTuple):
+    """An equilibrium of x' = f(x, y), y' = g(x, y) and its linearization (``classify_equilibrium_2d``)."""
+
+    point: tuple[float, float]      # (x*, y*)
+    jacobian: np.ndarray            # J at the point, by central differences
+    linear: PhaseType               # the picture of the linearization u' = J u
+    stability: str                  # linear.stability, STABILITY_UNSTABLE or STABILITY_INCONCLUSIVE
+    reason: str                     # one of the REASON_... sentences
+
+
+def classify_equilibrium_2d(f: Field, point: Sequence[float], rtol: float = LINEARIZATION_RTOL,
+                            h: float = JACOBIAN_STEP) -> EquilibriumType:
+    """An equilibrium of x' = f(x, y), y' = g(x, y), classified by its linearization (notebook 18).
+
+    Lebl, Sections 8.1-8.2 (Table 8.2.1, "Trouble with Centers"). First the point is checked to be an
+    equilibrium: |f| and |g| there at most EQUILIBRIUM_TOL max(1, |J| max(1, |point|)), |J| the largest
+    entry of J (so a point such as (550/3, 40) typed as floats is accepted). Then J = ``jacobian(f, point,
+    h)`` and ``linear = classify_linear_2d(J, rtol)`` (LINEARIZATION_RTOL explains the value).
+    ``stability`` is ``linear.stability`` when no eigenvalue of J has real part 0 (saddles, nodes,
+    spirals, degenerate and star nodes): near the point the system has the stability, and the kind of
+    picture, of its linearization, when f and g have continuous partial derivatives (Lebl states this
+    without proof). It is STABILITY_INCONCLUSIVE ("inconclusive", the word of ``classify_equilibrium``,
+    notebook 03) for a center of J (the nonlinear terms decide: Lebl's Example 8.2.3 is a spiral source
+    with the same J as the center of Example 8.1.1) and when det J = 0 (a line of equilibria, parallel
+    lines or J = 0: the point is not "almost linear"), except that det J = 0 with tr J > 0 (an
+    eigenvalue with positive real part) is STABILITY_UNSTABLE. ``reason`` says which, in one sentence.
+    A degenerate or star node of J (one eigenvalue twice) keeps its stability, but the nonlinear curves
+    near it may also turn slowly around the point (Lebl's Exercise 8.2.8 (c) calls such a point (0, 1)
+    a "source").
+    Units as for ``jacobian``: x and y in the units of the point, J in 1/time. ValueError: the point is
+    not an equilibrium (the message gives f and g there), and those of ``jacobian`` and
+    ``classify_linear_2d``.
+    """
+    p = _flat_point(point, SYSTEM_SIZE)
+    J = jacobian(f, p, h)
+    values = _values_at(f, p, "at the point")
+    allowed = EQUILIBRIUM_TOL * max(1.0, float(np.max(np.abs(J))) * max(1.0, float(np.max(np.abs(p)))))
+    if not np.all(np.abs(values) <= allowed):
+        raise ValueError(f"(x, y) = ({p[0]:g}, {p[1]:g}) is not an equilibrium: f = {values[0]:.4g}, "
+                         f"g = {values[1]:.4g} (both must be 0)")
+    linear = classify_linear_2d(J, rtol)
+    if linear.kind == KIND_LINE_OF_EQUILIBRIA and linear.stability == STABILITY_UNSTABLE:   # tr J > 0
+        stability, reason = STABILITY_UNSTABLE, REASON_SINGULAR_UNSTABLE
+    elif linear.kind in (KIND_LINE_OF_EQUILIBRIA, KIND_PARALLEL_LINES, KIND_ALL_EQUILIBRIA):
+        stability, reason = STABILITY_INCONCLUSIVE, REASON_SINGULAR
+    elif linear.kind == KIND_CENTER:
+        stability, reason = STABILITY_INCONCLUSIVE, REASON_CENTER
+    else:
+        stability, reason = linear.stability, REASON_LINEAR
+    return EquilibriumType((float(p[0]), float(p[1])), J, linear, stability, reason)
+
+
+def _field_values(f: Field, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """f(x, y) as an array of shape x.shape + (2,): (f, g) at every point, constants broadcast."""
+    result = f(x, y)
+    try:
+        first, second = result                            # exactly two parts: f(x, y) and g(x, y)
+        parts = [np.broadcast_to(np.asarray(part, dtype=float), np.shape(x)) for part in (first, second)]
+    except (TypeError, ValueError):
+        raise ValueError("f(x, y) must return two values, (f(x, y), g(x, y)), each a number or an array "
+                         "of the shape of x") from None
+    return np.stack(parts, axis=-1)
+
+
+PORTRAIT_STEPS = 400            # RK4 steps of a trajectory (plan 18: about 1e-5 hares over 40 time units)
+ESCAPE_MARGIN = 1.0             # a path is followed until it leaves the window enlarged by this many sizes
+
+
+def _start_points(starts: ArrayLike) -> np.ndarray:
+    """The starts as a float array of shape (k, 2) of finite numbers (one start (x, y): k = 1)."""
+    try:
+        points = np.asarray(starts, dtype=float)
+    except (TypeError, ValueError):                       # text, or points of different lengths
+        points = None
+    if points is not None and points.shape == (SYSTEM_SIZE,):
+        points = points[np.newaxis, :]
+    if points is None or points.ndim != 2 or points.shape[1] != SYSTEM_SIZE or points.shape[0] == 0:
+        raise ValueError("starts must be a list of points (x, y), for example [(1.0, 0.0), (0.5, 0.5)]")
+    if not np.all(np.isfinite(points)):
+        raise ValueError("the starts must be finite numbers")
+    return points
+
+
+def trajectories(f: Field, starts: ArrayLike, t_span: tuple[float, float], n_steps: int = PORTRAIT_STEPS,
+                 window: tuple[tuple[float, float], tuple[float, float]] | None = None,
+                 ) -> tuple[np.ndarray, np.ndarray]:
+    """The solutions of x' = f(x, y), y' = g(x, y) from several starts at once (notebook 18).
+
+    The classical Runge-Kutta method of notebook 04 (Lebl, Section 1.7) with the fixed step
+    (t1 - t0) / n_steps, applied to all the starts together: the step of ``rk4`` works on an array of
+    shape (k, 2), so a portrait of 24 paths costs the same number of Python steps as one path. t_span =
+    (t0, t1) may decrease (backward in time). Returns t (n_steps + 1 times, from t0 to t1) and the
+    paths, an array of shape (n_steps + 1, k, 2): [i, j] is the point (x, y) of start j at t[i]. f
+    returns the pair (f(x, y), g(x, y)), not an array of points (with exactly two starts an array of
+    points, shape (2, 2), cannot be told apart from the pair: write the pair). With
+    ``window = ((x_lo, x_hi), (y_lo, y_hi))`` a path that leaves the window enlarged by ESCAPE_MARGIN
+    times its size on each side is NaN from there on, and so is a path whose value is no longer finite
+    (no RuntimeWarning: computed inside ``np.errstate``); the loop stops when every path has left.
+    Units: t in the time unit of the rates in f; x and y in the units of the starts. ValueError: starts
+    not of shape (k, 2) (one start (x, y) is accepted as k = 1) or not finite; t_span with equal or
+    non-finite ends; n_steps not a positive integer, or above MAX_STEPS; a window that is not
+    increasing; f returning values of the wrong shape.
+    """
+    points = _start_points(starts)
+    t0, t1 = _require_finite("t0", t_span[0]), _require_finite("t1", t_span[1])
+    if t0 == t1:
+        raise ValueError("t_span must have two different ends (t0, t1)")
+    if isinstance(n_steps, bool) or not isinstance(n_steps, (int, np.integer)) or n_steps < 1:
+        raise ValueError(f"n_steps must be a positive whole number, got {n_steps!r}")
+    if n_steps > MAX_STEPS:
+        raise ValueError(f"too many steps ({n_steps}, the limit is {MAX_STEPS}): use fewer steps")
+    low = np.array([-np.inf, -np.inf])
+    high = np.array([np.inf, np.inf])
+    if window is not None:
+        try:
+            x_range, y_range = window
+        except (TypeError, ValueError):
+            raise ValueError(f"the window must be ((x_lo, x_hi), (y_lo, y_hi)), got {window!r}") from None
+        (x_lo, x_hi), (y_lo, y_hi) = _ranges(x_range, y_range)
+        sizes = np.array([x_hi - x_lo, y_hi - y_lo])
+        low = np.array([x_lo, y_lo]) - ESCAPE_MARGIN * sizes
+        high = np.array([x_hi, y_hi]) + ESCAPE_MARGIN * sizes
+
+    def field(s, state):                                  # the right-hand side for rk4: (k, 2) -> (k, 2)
+        return _field_values(f, state[:, 0], state[:, 1])
+
+    times = np.linspace(t0, t1, n_steps + 1)
+    h = (t1 - t0) / n_steps
+    paths = np.full((n_steps + 1,) + points.shape, np.nan)
+    paths[0] = points
+    alive = np.arange(points.shape[0])                    # the starts whose paths are still followed
+    state = points.copy()
+    with np.errstate(all="ignore"):                       # overflow and NaN are handled just below
+        for i in range(n_steps):
+            state = _rk4_step(field, times[i], state, h)
+            inside = np.all(np.isfinite(state) & (state >= low) & (state <= high), axis=1)
+            alive, state = alive[inside], state[inside]
+            if alive.size == 0:
+                break
+            paths[i + 1, alive] = state
+    return times, paths
+
+
+DIRECTION_GRID = 17             # arrows per side of a direction field
+ARROW_LENGTH = 0.7              # length of every arrow, in shorter sides of a grid cell (as in slope_field)
+MIN_GRID = 2                    # a grid needs at least two points per side
+ARROW_WIDTH = 0.075             # shaft width of a direction-field arrow, as a part of its length
+
+
+def _ranges(x_range: tuple[float, float],
+            y_range: tuple[float, float]) -> tuple[tuple[float, float], tuple[float, float]]:
+    """The two ranges of a window as floats, or a ValueError unless both are finite and increasing."""
+    message = (f"the window must have x_range and y_range increasing, got {x_range!r} and {y_range!r} "
+               "(each range is two finite numbers, the smaller first)")
+    try:
+        (x_lo, x_hi), (y_lo, y_hi) = [(float(lo), float(hi)) for lo, hi in (x_range, y_range)]
+    except (TypeError, ValueError):
+        raise ValueError(message) from None
+    if not (np.isfinite([x_lo, x_hi, y_lo, y_hi]).all() and x_lo < x_hi and y_lo < y_hi):
+        raise ValueError(message)
+    return (x_lo, x_hi), (y_lo, y_hi)
+
+
+def _window(x_range: tuple[float, float], y_range: tuple[float, float]) -> None:
+    """A ValueError unless both ranges of the window are finite and increasing."""
+    _ranges(x_range, y_range)
+
+
+def direction_field(ax: Axes, f: Field, x_range: tuple[float, float], y_range: tuple[float, float],
+                    n: int = DIRECTION_GRID, color: str = "0.6", length: float = ARROW_LENGTH) -> Axes:
+    """Draw the direction field of x' = f(x, y), y' = g(x, y): at each point of a grid an arrow along (f, g).
+
+    The 2-D analogue of ``slope_field``, with its look (Lebl, Section 3.1.3, the vector field; notebook
+    18). Every arrow has the same length and the same shape on the screen, ``length`` times the shorter
+    side of a grid cell, with a shaft ARROW_WIDTH times as wide, whatever the speed |(f, g)|: the picture
+    shows directions, not speeds. The screen is measured on the axes box as drawn when the function is
+    called, after the limits and the aspect (``ax.set_aspect("equal")``) are applied; a later change of the
+    box, such as ``tight_layout``, changes the lengths only slightly. Points of the n x n grid where
+    (f, g) is zero (an equilibrium on the grid) or not finite are left out before drawing, so no warning
+    appears. One call of ``ax.quiver``; the limits of the window are set. Units: x and y in the units of
+    the window; the arrows have none. Returns ``ax``. ValueError for a window that is not finite and
+    increasing, and for n not a whole number of at least 2.
+    """
+    (x_lo, x_hi), (y_lo, y_hi) = _ranges(x_range, y_range)
+    if isinstance(n, bool) or not isinstance(n, (int, np.integer)) or n < MIN_GRID:
+        raise ValueError(f"n, the number of arrows per side, must be a whole number of at least {MIN_GRID}, "
+                         f"got {n!r}")
+    x = np.linspace(x_lo, x_hi, n)
+    y = np.linspace(y_lo, y_hi, n)
+    X, Y = np.meshgrid(x, y)
+    dx, dy = (x_hi - x_lo) / (n - 1), (y_hi - y_lo) / (n - 1)       # grid spacing in x and in y
+    ax.set_xlim(x_lo, x_hi)
+    ax.set_ylim(y_lo, y_hi)
+    ax.apply_aspect()                                              # the box as drawn (equal aspect included)
+    box = ax.get_position()                                        # the axes, in parts of the figure
+    width, height = ax.figure.get_size_inches()
+    sx, sy = box.width * width / (x_hi - x_lo), box.height * height / (y_hi - y_lo)   # inches per unit
+    arrow = length * min(dx * sx, dy * sy)                         # the length of every arrow, in inches
+    with np.errstate(all="ignore"):
+        values = _field_values(f, X, Y)
+        u, v = values[..., 0] * sx, values[..., 1] * sy            # the direction on the screen
+        size = np.hypot(u, v)
+    keep = np.isfinite(size) & (size > 0)
+    if np.any(keep):
+        U = u[keep] / size[keep] * arrow / sx                      # back to data units
+        V = v[keep] / size[keep] * arrow / sy
+        ax.quiver(X[keep], Y[keep], U, V, angles="xy", scale_units="xy", scale=1, pivot="mid", color=color,
+                  units="inches", width=ARROW_WIDTH * arrow)       # the shaft in proportion to the arrow
+    return ax
+
+
+TRAJECTORY_ARROW_AT = 1 / 3     # where the arrowhead of a trajectory sits, as a part of its drawn length
+TRAJECTORY_WIDTH = 1.5          # line width of a trajectory (points)
+START_DOT_SIZE = 16             # area of the dot at each start (points^2)
+ARROW_HEAD_SIZE = 14            # size of the arrowhead (points)
+ARROW_HEAD_SPAN = 0.02          # the arrowhead points along this part of the window, from its place
+
+
+def _arrow_on(ax: Axes, path: np.ndarray, x_range: tuple[float, float], y_range: tuple[float, float],
+              color: str) -> None:
+    """One arrowhead on a path (rows (x, y), NaN after it leaves), TRAJECTORY_ARROW_AT along its drawn part.
+    """
+    with np.errstate(invalid="ignore"):                   # NaN rows compare as False: not visible
+        visible = (np.all(np.isfinite(path), axis=1) & (path[:, 0] >= x_range[0]) & (path[:, 0] <= x_range[1])
+                   & (path[:, 1] >= y_range[0]) & (path[:, 1] <= y_range[1]))
+    if not visible.any():
+        return
+    first = int(np.argmax(visible))                       # only the first visible run: no arrow across a gap
+    end = first + (int(np.argmin(visible[first:])) if not visible[first:].all() else len(visible) - first)
+    shown = path[first:end]
+    if len(shown) < 2:
+        return
+    sizes = np.array([x_range[1] - x_range[0], y_range[1] - y_range[0]])
+    steps = np.hypot(*(np.diff(shown, axis=0) / sizes).T)          # lengths measured in window sizes
+    along = np.concatenate([[0.0], np.cumsum(steps)])
+    if along[-1] <= ARROW_HEAD_SPAN:
+        return                                                      # a path that hardly moves: no arrow
+    tail = int(np.searchsorted(along, TRAJECTORY_ARROW_AT * along[-1]))
+    head = int(np.searchsorted(along, along[min(tail, len(along) - 1)] + ARROW_HEAD_SPAN))
+    tail, head = min(tail, len(shown) - 2), min(max(head, tail + 1), len(shown) - 1)
+    ax.annotate("", xy=tuple(shown[head]), xytext=tuple(shown[tail]),
+                arrowprops={"arrowstyle": "-|>", "color": color, "lw": TRAJECTORY_WIDTH,
+                            "mutation_scale": ARROW_HEAD_SIZE, "shrinkA": 0, "shrinkB": 0})
+
+
+def phase_portrait(ax: Axes, f: Field, starts: ArrayLike, t_span: tuple[float, float],
+                   x_range: tuple[float, float], y_range: tuple[float, float], *,
+                   n_steps: int = PORTRAIT_STEPS, both_ways: bool = True, color: str = "C0") -> Axes:
+    """Draw the trajectories of x' = f(x, y), y' = g(x, y) through ``starts`` (Lebl, Sections 3.5 and 8.1).
+
+    Used in notebook 18. The paths come from ``trajectories`` (all the starts in one computation):
+    forward over t_span = (t0, t1), t1 > t0, and, with ``both_ways``, backward over the same length of
+    time, from t0 to t0 - (t1 - t0), so each start lies on the whole curve drawn through it. A dot marks
+    each start and one arrowhead on each forward part, at TRAJECTORY_ARROW_AT of its drawn length,
+    shows the direction of increasing t. The paths are followed until they leave the window enlarged by
+    ESCAPE_MARGIN; the limits of the window are set. Units: t in the time unit of the rates in f; x and
+    y in the units of the window. Returns ``ax``. ValueError: t1 not after t0, a start outside the
+    window, a window that is not increasing, and those of ``trajectories``.
+    """
+    x_range, y_range = _ranges(x_range, y_range)
+    t0, t1 = _require_finite("t0", t_span[0]), _require_finite("t1", t_span[1])
+    if not t1 > t0:
+        raise ValueError(f"t_span = (t0, t1) must have t1 > t0 (the paths are drawn forward and backward), "
+                         f"got {t_span!r}")
+    points = _start_points(starts)
+    outside = ~((points[:, 0] >= x_range[0]) & (points[:, 0] <= x_range[1])
+                & (points[:, 1] >= y_range[0]) & (points[:, 1] <= y_range[1]))
+    if np.any(outside):
+        x0, y0 = points[np.argmax(outside)]               # the first start outside
+        raise ValueError(f"the start (x, y) = ({x0:g}, {y0:g}) is outside the window")
+    window = (tuple(x_range), tuple(y_range))
+    forward = trajectories(f, points, (t0, t1), n_steps, window)[1]
+    parts = [forward]
+    if both_ways:
+        parts.append(trajectories(f, points, (t0, 2 * t0 - t1), n_steps, window)[1])
+    for path in range(forward.shape[1]):
+        for part in parts:
+            ax.plot(part[:, path, 0], part[:, path, 1], "-", color=color, linewidth=TRAJECTORY_WIDTH)
+        _arrow_on(ax, forward[:, path], x_range, y_range, color)
+    ax.scatter(forward[0, :, 0], forward[0, :, 1], s=START_DOT_SIZE, color=color, zorder=3)
+    ax.set_xlim(*x_range)
+    ax.set_ylim(*y_range)
+    return ax
+
+
+# ---------------------------------------------------------------------------
 # Checking an answer found by hand (exercises "by hand, then check")
 # ---------------------------------------------------------------------------
 CHECK_TOLERANCE = 1e-6          # relative and absolute tolerance of check()
@@ -1062,6 +1791,130 @@ def check_solution(label: str, expression, residual, symbol, interval: tuple[flo
         return False
     print(f"{label}: correct")
     return True
+
+
+def check_vector(label: str, value, expected, tol: float = CHECK_TOLERANCE, *,
+                 up_to_scale: bool = False) -> bool:
+    """Check an answer that is a vector or a matrix, and say so in one line (notebook 17).
+
+    ``tol`` comes fourth, as in ``check`` and ``check_formula``. With ``up_to_scale=False`` this is
+    ``check`` itself: the same rule and the same messages (a matrix is typed as a list of rows,
+    [[a11, a12], [a21, a22]]). With ``up_to_scale=True`` the answer is accepted
+    when it is a nonzero multiple, real or complex, of the vector ``expected``: eigenvectors are never
+    unique (Lebl asks the question after Example 3.4.3). The best multiple
+    k = (conj(e) . value) / (conj(e) . e) is computed, and the answer is right when
+    |value - k e| <= tol * |value|: the direction is compared, whatever the length of the vector.
+    Like ``check`` it prints one line, returns True or False, never shows the expected vector and
+    never raises for a wrong answer; the zero vector gets its own message, and a column (as SymPy's
+    ``eigenvects`` gives it) is read as a list. It raises ValueError only
+    for a mistake of the notebook: with ``up_to_scale=True``, an expected vector that is not a flat
+    list of finite numbers, or that is zero.
+    """
+    tol = _require_positive("tol", tol)
+    if not up_to_scale:
+        return check(label, value, expected, tol)
+    try:
+        direction = np.asarray(expected, dtype=complex)
+    except (TypeError, ValueError):
+        direction = None
+    if (direction is None or direction.ndim != 1 or not np.all(np.isfinite(direction))
+            or not np.any(direction != 0)):
+        raise ValueError("expected must be a nonzero vector of finite numbers when up_to_scale=True")
+    if isinstance(value, (str, bytes)):
+        print(f"{label}: not yet (type your answer without quotes; got {value!r})")
+        return False
+    if value is None:
+        print(f"{label}: no answer yet (replace None with your value)")
+        return False
+    comma = _decimal_comma(value, expected)
+    if comma is not None:
+        whole, decimals = comma
+        print(f"{label}: not yet ({whole},{decimals} is read by Python as the two numbers "
+              f"{whole} and {decimals}: write {whole}.{decimals}, with a point)")
+        return False
+    try:
+        got = np.asarray(value, dtype=complex)
+    except (TypeError, ValueError):
+        print(f"{label}: not yet (a list of {direction.size} numbers is expected, got {value!r})")
+        return False
+    if got.size != direction.size:
+        print(f"{label}: not yet ({direction.size} value(s) expected, got {got.size})")
+        return False
+    if got.ndim == 2 and got.shape[1] == 1:               # a column, as SymPy gives it
+        got = got[:, 0]
+    if got.ndim != 1:
+        print(f"{label}: not yet (one list of {direction.size} numbers is expected, "
+              "without brackets inside it)")
+        return False
+    if np.all(got == 0):
+        print(f"{label}: not yet (the zero vector is never an eigenvector)")
+        return False
+    with np.errstate(all="ignore"):
+        multiple = np.vdot(direction, got) / np.vdot(direction, direction)
+        gap = np.linalg.norm(got - multiple * direction)
+        right = bool(np.isfinite(gap) and gap <= tol * np.linalg.norm(got))
+    if right:
+        print(f"{label}: correct")
+        return True
+    print(f"{label}: not yet (your vector does not point along an eigenvector, try again)")
+    return False
+
+
+# The words of the "classify" exercises of notebook 18 (Lebl, Table 3.5.1 and Section 8.2.2)
+PORTRAIT_WORDS = (KIND_SOURCE, KIND_SINK, KIND_SADDLE, KIND_CENTER, KIND_SPIRAL_SOURCE, KIND_SPIRAL_SINK)
+STABILITY_WORDS = (STABILITY_ASYMPTOTIC, STABILITY_STABLE, STABILITY_UNSTABLE)
+# read-only (a notebook cell cannot change it by accident): Lebl's other names, then other books'
+KIND_SYNONYMS = MappingProxyType({
+    "unstable node": KIND_SOURCE, "stable node": KIND_SINK, "centre": KIND_CENTER,
+    "center point": KIND_CENTER, "saddle point": KIND_SADDLE,
+    "unstable spiral": KIND_SPIRAL_SOURCE, "stable spiral": KIND_SPIRAL_SINK,
+    "unstable focus": KIND_SPIRAL_SOURCE, "stable focus": KIND_SPIRAL_SINK})
+
+
+def _word(text: str) -> str:
+    """A word as it is compared: lower case, no spaces around, "-" and "_" read as spaces, single spaces."""
+    return " ".join(text.lower().replace("-", " ").replace("_", " ").split())
+
+
+def check_choice(label: str, value, expected: str, choices: Sequence[str],
+                 synonyms: Mapping[str, str] | None = None) -> bool:
+    """Check an answer that is a word, such as "saddle", and say so in one line (notebook 18).
+
+    The same manners as ``check``: one line, True or False, the expected word is never shown and an
+    answer never raises. The answer is normalised (capitals, spaces around it, "-" and "_" and repeated
+    spaces do not matter: " Spiral-sink " is "spiral sink") and then mapped through ``synonyms`` (for
+    example KIND_SYNONYMS, Lebl's other names: "stable node" is "sink"). Messages: None -> no answer
+    yet; not a string -> type the word in quotes; a word that is not among ``choices`` -> the list of
+    the choices (the menu of the exercise, not its answer); otherwise "correct" or "not yet, try
+    again". ValueError only for a mistake of the notebook: ``expected`` not among ``choices``, a choice
+    that is not text, or ``synonyms`` that is not a mapping of words to words. Choices used by notebook
+    18: PORTRAIT_WORDS (the six words of Lebl's Table 3.5.1) and STABILITY_WORDS.
+    """
+    if isinstance(choices, str) or not all(isinstance(choice, str) for choice in choices):
+        raise ValueError(f"choices must be a list of words, got {choices!r}")
+    words_only = isinstance(synonyms, Mapping) and all(
+        isinstance(key, str) and isinstance(word, str) for key, word in synonyms.items())
+    if synonyms is not None and not words_only:
+        raise ValueError(f"synonyms must map words to words, got {synonyms!r}")
+    table = {_word(key): _word(word) for key, word in (synonyms or {}).items()}
+    words = [_word(choice) for choice in choices]
+    if not isinstance(expected, str) or table.get(_word(expected), _word(expected)) not in words:
+        raise ValueError(f"expected must be one of the choices {list(choices)!r}, got {expected!r}")
+    if value is None:
+        print(f"{label}: no answer yet (replace None with your answer, a word in quotes)")
+        return False
+    if not isinstance(value, str):
+        print(f'{label}: not yet (type the word in quotes: "...", with your word in place of the dots)')
+        return False
+    answer = table.get(_word(value), _word(value))
+    if answer not in words:
+        print(f"{label}: not yet (not one of the words: {', '.join(choices)})")
+        return False
+    if answer == table.get(_word(expected), _word(expected)):
+        print(f"{label}: correct")
+        return True
+    print(f"{label}: not yet, try again")
+    return False
 
 
 # ---------------------------------------------------------------------------

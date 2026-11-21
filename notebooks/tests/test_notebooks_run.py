@@ -43,7 +43,127 @@ NAME_14 = "14_Nonhomogeneous_Equations.ipynb"
 U_DERIVATIVES = "    return -y2 * f / wronskian_of(y1, y2), y1 * f / wronskian_of(y1, y2)"
 NAME_15 = "15_Forced_Vibrations.ipynb"
 NAME_16 = "16_Higher_Order_BVP.ipynb"
+NAME_17 = "17_Linear_Systems.ipynb"
+TANK_MATRIX = "    return np.array([[-(Q + Qw), Q], [Q + Qw, -(Q + Qw)]]) / V"
+CART_2KG = "my_cart_3kg = sp.Rational(2, 5) * sp.cos(t) + sp.Rational(3, 5) * sp.cos(t / sp.sqrt(6))"
+CART_3KG = "my_cart_3kg = sp.Rational(2, 5) * sp.cos(t / sp.sqrt(6)) - sp.Rational(2, 5) * sp.cos(t)"
+TANK_WRONG = "Exercise 3: not yet. For Q = "
+NAME_18 = "18_Phase_Plane.ipynb"
+HARES_JACOBIAN = "    return [[0.4 - 0.01 * y - 2 * gamma * x, -0.01 * x], [0.003 * y, 0.003 * x - 0.3]]"
+HARES_TRANSPOSED = "    return [[0.4 - 0.01 * y - 2 * gamma * x, 0.003 * y], [-0.01 * x, 0.003 * x - 0.3]]"
+HARES_ARRAY = ("    return np.array([[0.4 - 0.01 * y - 2 * gamma * x, -0.01 * x], "
+               "[0.003 * y, 0.003 * x - 0.3]])")
+HARES_WRONG = "Exercise 3: not yet. At x = "
 EXERCISES = {
+    NAME_18: {
+        "answers": {
+            "my_kind_357 = None": 'my_kind_357 = "spiral source"',
+            "my_diagonal_spiral = None": "my_diagonal_spiral = False",
+            "my_number_of_equilibria = None": "my_number_of_equilibria = 0",
+            "my_conservative_sink = None": "my_conservative_sink = False",
+            "my_tr_det_d = None": "my_tr_det_d = [-3, 2]",
+            "my_kind_d = None": 'my_kind_d = "sink"',
+            "my_tr_det_e = None": "my_tr_det_e = [2, -15]",
+            "my_kind_e = None": 'my_kind_e = "saddle"',
+            "my_point_b = None": "my_point_b = (1 / 2, -1 / 4)",
+            "my_jacobian_b = None": "my_jacobian_b = [[-1, 1], [1, 1]]",
+            "my_kind_b = None": 'my_kind_b = "saddle"',
+            "my_other_point = None": "my_other_point = (0, 1)",
+            "my_kind_origin = None": 'my_kind_origin = "spiral sink"',
+            "my_stability_origin = None": 'my_stability_origin = "asymptotically stable"',
+            "my_kind_other = None": 'my_kind_other = "saddle"',
+            "my_stability_other = None": 'my_stability_other = "unstable"',
+            "my_speed_over_the_top = None": "my_speed_over_the_top = 2",
+            FILL_IN: HARES_JACOBIAN,
+        },
+        "solved": ("Exercise 1a: correct", "Exercise 1b: correct", "Exercise 1c: correct",
+                   "Exercise 1d: correct",
+                   "Exercise 2a (d), tr and det: correct", "Exercise 2a (d), picture: correct",
+                   "Exercise 2a (e), tr and det: correct", "Exercise 2a (e), picture: correct",
+                   "Exercise 2b, equilibrium: correct", "Exercise 2b, J: correct",
+                   "Exercise 2b, picture: correct",
+                   "Exercise 2c, the other equilibrium: correct", "Exercise 2c, (0, 0), picture: correct",
+                   "Exercise 2c, (0, 0), stability: correct", "Exercise 2c, the other, picture: correct",
+                   "Exercise 2c, the other, stability: correct", "Exercise 2d: correct",
+                   "Exercise 3: correct at all 15 points",
+                   "gamma = 0.001: (0, 0) saddle, eigenvalues -0.3 and 0.4; (400, 0) saddle, eigenvalues "
+                   "-0.4 and 0.9; (100, 30) spiral sink, eigenvalues -0.05 +- 0.296i",
+                   "gamma = 0.01: (0, 0) saddle, eigenvalues -0.3 and 0.4; (40, 0) sink, eigenvalues "
+                   "-0.4 and -0.18; (100, -60) is outside the quarter",
+                   "gamma = 0.001: at t = 200, 100.0 hares and 30.0 foxes"),
+        "unsolved": ("Exercise 1a: no answer yet", "Exercise 2a (d), picture: no answer yet",
+                     "Exercise 2c, the other, stability: no answer yet", "Exercise 2d: no answer yet",
+                     "Exercise 3: complete hares_jacobian first"),
+        "wrong": ({"my_kind_357 = None": 'my_kind_357 = "spiral sink"',
+                   "my_diagonal_spiral = None": "my_diagonal_spiral = True",
+                   "my_number_of_equilibria = None": "my_number_of_equilibria = 1",
+                   "my_conservative_sink = None": "my_conservative_sink = True",
+                   "my_tr_det_d = None": "my_tr_det_d = [2, -3]",                 # det and tr exchanged
+                   "my_kind_d = None": 'my_kind_d = "source"',                    # the sign of tr A
+                   "my_tr_det_e = None": "my_tr_det_e = [2, 15]",
+                   "my_kind_e = None": 'my_kind_e = "center"',
+                   "my_point_b = None": "my_point_b = (-1 / 4, 1 / 2)",           # y and x exchanged
+                   "my_jacobian_b = None": "my_jacobian_b = [[1, 1], [1, 1]]",    # 2(x - 1) taken as 2x
+                   "my_kind_b = None": 'my_kind_b = "sink"',
+                   "my_other_point = None": "my_other_point = (1, 0)",
+                   "my_kind_origin = None": 'my_kind_origin = "center"',          # not a spiral sink
+                   "my_stability_origin = None": 'my_stability_origin = "stable"',
+                   "my_kind_other = None": 'my_kind_other = "source"',
+                   "my_stability_other = None": 'my_stability_other = "stable"',
+                   "my_speed_over_the_top = None": "my_speed_over_the_top = 4",   # 2 rad/s, squared
+                   FILL_IN: HARES_TRANSPOSED},
+                  "Exercise 3: not yet. At x = 50 hares, y = 20 foxes, gamma = 0.001: row 1, column 2"),
+    },
+    NAME_17: {
+        "answers": {
+            "my_Av = None": "my_Av = [3, -3, 9]",
+            "my_equations = None": "my_equations = 4",
+            "my_triangular = None": "my_triangular = [-3, 2, 4]",
+            "my_one_cart_moves = None": "my_one_cart_moves = False",
+            "my_eigenvalues = None": "my_eigenvalues = [2, 5]",
+            "my_v_for_low = None": "my_v_for_low = [-2, 2]",                 # other forms of the eigenvectors
+            "my_v_for_high = None": "my_v_for_high = [3, 6]",
+            "my_complex_eigenvalue = None": "my_complex_eigenvalue = 1 + 2j",
+            "my_complex_vector = None": "my_complex_vector = [1, -1j]",      # -i times (i, 1)
+            "my_x1 = None": "my_x1 = sp.exp(t) * sp.cos(2 * t)",
+            "my_x2 = None": "my_x2 = sp.exp(t) * sp.sin(2 * t)",
+            "my_repeated = None": "my_repeated = 2",
+            "my_v = None": "my_v = [1, 1]",
+            "my_w = None": "my_w = [0, -1 / 3]",
+            "my_cart_3kg = None": CART_3KG,
+            FILL_IN: TANK_MATRIX,
+        },
+        "solved": ("Exercise 1a: correct", "Exercise 1b: correct", "Exercise 1c: correct",
+                   "Exercise 1d: correct", "Exercise 2a, eigenvalues: correct",
+                   "Exercise 2a, eigenvector for the smaller: correct",
+                   "Exercise 2a, eigenvector for the larger: correct", "Exercise 2b, eigenvalue: correct",
+                   "Exercise 2b, eigenvector: correct", "Exercise 2b, x1: correct",
+                   "Exercise 2b, x2: correct", "Exercise 2c, eigenvalue: correct", "Exercise 2c, v: correct",
+                   "Exercise 2c, w: correct", "Exercise 2d: correct",
+                   "Exercise 3: correct on all 3 sets of pipes",
+                   "The open tanks: eigenvalues -0.06 and -0.02 per second, eigenvectors [1.0, -2.0] and "
+                   "[1.0, 2.0]; tank 2 holds at most 7.70 g, at t = 27.5 s"),
+        "unsolved": ("Exercise 1a: no answer yet", "Exercise 2b, x1: no answer yet",
+                     "Exercise 2c, w: no answer yet", "Exercise 2d: no answer yet",
+                     "Exercise 3: complete tank_matrix first"),
+        "wrong": ({"my_Av = None": "my_Av = [1, -1, 3]",                             # v itself
+                   "my_equations = None": "my_equations = 2",                        # the number of equations
+                   "my_triangular = None": "my_triangular = [2, -3, 4]",             # not in order
+                   "my_one_cart_moves = None": "my_one_cart_moves = True",
+                   "my_eigenvalues = None": "my_eigenvalues = [5, 2]",
+                   "my_v_for_low = None": "my_v_for_low = [1, 2]",                   # for the other one
+                   "my_v_for_high = None": "my_v_for_high = [0, 0]",                 # the zero vector
+                   "my_complex_eigenvalue = None": "my_complex_eigenvalue = 1 - 2j",
+                   "my_complex_vector = None": "my_complex_vector = [-1j, 1]",       # the conjugate
+                   "my_x1 = None": "my_x1 = sp.exp(t) * sp.sin(2 * t)",              # x1 and x2 exchanged
+                   "my_x2 = None": "my_x2 = sp.exp(t) * sp.cos(2 * t)",
+                   "my_repeated = None": "my_repeated = -2",
+                   "my_v = None": "my_v = [1, -1]",
+                   "my_w = None": "my_w = [1, -1]",
+                   "my_cart_3kg = None": CART_2KG,                                   # the 2 kg cart
+                   FILL_IN: "    return np.array([[-(Q + Qw), Q + Qw], [Q, -(Q + Qw)]]) / V"},   # transposed
+                  "Exercise 3: not yet. For Q = 1 L/s, Qw = 3 L/s, V = 100 L"),
+    },
     NAME_16: {
         "answers": {
             "my_value_at_1 = None": "my_value_at_1 = 0",
@@ -572,6 +692,134 @@ def test_notebook_16_particular_wrong_answers(answers, message):
     assert message is None or message in text
 
 
+@pytest.mark.parametrize("answers, message", [
+    # other accepted forms
+    ({"my_v_for_low = None": "my_v_for_low = [1, -1]", "my_v_for_high = None": "my_v_for_high = [1, 2]"},
+     "Exercise 2a, eigenvector for the larger: correct"),
+    ({"my_complex_vector = None": "my_complex_vector = [1j, 1]"}, "Exercise 2b, eigenvector: correct"),
+    ({"my_v = None": "my_v = [1, 1]", "my_w = None": "my_w = [1 / 3, 0]"}, "Exercise 2c, w: correct"),
+    ({"my_v = None": "my_v = [2, 2]", "my_w = None": "my_w = [2 / 3, 0]"}, "Exercise 2c, w: correct"),
+    ({FILL_IN: "    return [[-(Q + Qw) / V, Q / V], [(Q + Qw) / V, -(Q + Qw) / V]]"},
+     "Exercise 3: correct on all 3 sets of pipes"),
+    # wrong answers, each with its message
+    ({"my_v_for_low = None": "my_v_for_low = [1, 2]"},
+     "Exercise 2a, eigenvector for the smaller: not yet (your vector does not point along an eigenvector"),
+    ({"my_v_for_high = None": "my_v_for_high = [0, 0]"},
+     "Exercise 2a, eigenvector for the larger: not yet (the zero vector is never an eigenvector)"),
+    ({"my_complex_vector = None": "my_complex_vector = [-1j, 1]"},
+     "Exercise 2b, eigenvector: not yet (your vector does not point along an eigenvector"),
+    ({"my_v = None": "my_v = [1, 1]", "my_w = None": "my_w = [1, 1]"},                        # w = v
+     "Exercise 2c, w: not yet ((A - lambda I) w must be your v"),
+    ({"my_w = None": "my_w = [1, 0]"}, "Exercise 2c, w: not yet (find an eigenvector v first"),
+    ({"my_cart_3kg = None": CART_2KG}, "Exercise 2d: not yet (your formula does not give the right values"),
+    ({FILL_IN: "    return np.array([[-(Q + Qw), Q + Qw], [Q, -(Q + Qw)]]) / V"}, TANK_WRONG),   # transposed
+    ({FILL_IN: "    return np.array([[-(Q + Qw), Q], [Q + Qw, -(Q + Qw)]])"}, TANK_WRONG),       # without / V
+    ({FILL_IN: "    return np.array([[-Q, Q], [Q, -(Q - Qw)]]) / V"}, TANK_WRONG),               # Q - Qw
+    ({FILL_IN: "    return Q / V"}, "Exercise 3: not yet (tank_matrix must return a 2 x 2 matrix"),
+    ({FILL_IN: "    return np.full((2, 2), np.nan)"}, TANK_WRONG),                  # NaN is never right
+    ({FILL_IN: "    return q / V"}, "got: NameError: name 'q' is not defined"),
+    # a complex eigenvector, its w; the right values in the wrong order
+    ({"my_v = None": "my_v = [1j, 1j]", "my_w = None": "my_w = [1j / 3, 0]"}, "Exercise 2c, w: correct"),
+    ({"my_v = None": "my_v = sp.Matrix([3, 3])", "my_w = None": "my_w = sp.Matrix([1, 0])"},   # SymPy columns
+     "Exercise 2c, w: correct"),
+    ({"my_eigenvalues = None": "my_eigenvalues = [5, 2]"},
+     "Exercise 2a, eigenvalues: not yet (right values: write them in increasing order)"),
+    # a single number where a list is expected does not stop the notebook
+    ({"my_Av = None": "my_Av = 3"}, "Exercise 1a: not yet (3 value(s) expected, got 1)"),
+    ({"my_v_for_low = None": "my_v_for_low = 1"},
+     "Exercise 2a, eigenvector for the smaller: not yet (2 value(s) expected"),
+    ({"my_v = None": "my_v = [1, 1]", "my_w = None": "my_w = 2"},
+     "Exercise 2c, w: not yet (a list of two numbers"),
+])
+def test_notebook_17_particular_answers(answers, message):
+    try:
+        text = printed(execute(with_answers(NAME_17, answers)))
+    except Exception as problem:                               # a wrong answer must never stop the notebook
+        pytest.fail(f"the notebook stopped: {str(problem)[-300:]}")
+    assert message in text
+
+
+def test_notebook_17_section_6_can_be_run_again_after_exercise_3():
+    # the lesson of notebook 15: no global name of the sections is redefined by an exercise
+    nb = with_answers(NAME_17, EXERCISES[NAME_17]["answers"])
+    section_6 = [cell.source for cell in nb.cells if cell.cell_type == "code"
+                 and ("COMPLEX_EXAMPLE = " in cell.source or "def plot_cases" in cell.source)]
+    check = next(cell for cell in nb.cells if cell.cell_type == "code" and "PIPE_SETS = " in cell.source)
+    assert len(section_6) == 2
+    nb.cells.extend([nbformat.v4.new_code_cell(source) for source in section_6]
+                    + [nbformat.v4.new_code_cell(check.source)])
+    assert printed(execute(nb)).count("Exercise 3: correct on all 3 sets of pipes") == 2
+
+
+@pytest.mark.parametrize("answers, message", [
+    # other accepted forms: capitals, Lebl's synonyms, a tuple, np.array, 2.0 for 2
+    ({"my_kind_d = None": 'my_kind_d = "Sink"'}, "Exercise 2a (d), picture: correct"),
+    ({"my_kind_d = None": 'my_kind_d = "stable node"'}, "Exercise 2a (d), picture: correct"),
+    ({"my_kind_357 = None": 'my_kind_357 = " Spiral-Source "'}, "Exercise 1a: correct"),
+    ({"my_kind_other = None": 'my_kind_other = "saddle point"'},
+     "Exercise 2c, the other, picture: correct"),
+    ({"my_point_b = None": "my_point_b = (0.5, -0.25)"}, "Exercise 2b, equilibrium: correct"),
+    ({"my_point_b = None": "my_point_b = np.array([0.5, -0.25])"}, "Exercise 2b, equilibrium: correct"),
+    ({"my_jacobian_b = None": "my_jacobian_b = np.array([[-1.0, 1.0], [1.0, 1.0]])"},
+     "Exercise 2b, J: correct"),
+    ({"my_tr_det_e = None": "my_tr_det_e = (2.0, -15.0)"}, "Exercise 2a (e), tr and det: correct"),
+    ({"my_speed_over_the_top = None": "my_speed_over_the_top = 2.0"}, "Exercise 2d: correct"),
+    ({FILL_IN: HARES_ARRAY}, "Exercise 3: correct at all 15 points"),
+    ({FILL_IN: "    return [[LV_A - LV_B * y - 2 * gamma * x, -LV_B * x], [LV_C * y, LV_C * x - LV_D]]"},
+     "Exercise 3: correct at all 15 points"),
+    # wrong answers, each with its message
+    ({"my_kind_d = None": 'my_kind_d = "source"'}, "Exercise 2a (d), picture: not yet, try again"),
+    ({"my_kind_origin = None": 'my_kind_origin = "center"'},
+     "Exercise 2c, (0, 0), picture: not yet, try again"),
+    ({"my_stability_origin = None": 'my_stability_origin = "stable"'},
+     "Exercise 2c, (0, 0), stability: not yet, try again"),
+    ({"my_kind_357 = None": 'my_kind_357 = "spiral"'},
+     "Exercise 1a: not yet (not one of the words: source, sink"),
+    ({"my_kind_357 = None": "my_kind_357 = 3"}, "Exercise 1a: not yet (type the word in quotes"),
+    ({"my_point_b = None": "my_point_b = (-1 / 4, 1 / 2)"},
+     "Exercise 2b, equilibrium: not yet (right values: write them in the order asked)"),
+    ({"my_tr_det_d = None": "my_tr_det_d = [2, -3]"},
+     "Exercise 2a (d), tr and det: not yet (right values: write them in the order asked)"),
+    ({"my_jacobian_b = None": "my_jacobian_b = [[-1, 1]]"},
+     "Exercise 2b, J: not yet (4 value(s) expected, got 2)"),
+    ({"my_speed_over_the_top = None": "my_speed_over_the_top = 4"}, "Exercise 2d: not yet"),
+    ({"my_other_point = None": "my_other_point = 1"},
+     "Exercise 2c, the other equilibrium: not yet (2 value(s)"),
+    ({FILL_IN: "    return [[0.4 - 0.01 * y - gamma * x, -0.01 * x], [0.003 * y, 0.003 * x - 0.3]]"},
+     HARES_WRONG),                                                          # -gamma x for -2 gamma x
+    ({FILL_IN: "    return [[0.4 - 0.01 * y - 2 * gamma * x, 0.01 * x], [0.003 * y, 0.003 * x - 0.3]]"},
+     HARES_WRONG),                                                          # +0.01 x for -0.01 x
+    ({FILL_IN: "    return [[0.4 - 0.01 * y, -0.01 * x], [0.003 * y, 0.003 * x - 0.3]]"},
+     HARES_WRONG),                                                          # Lotka-Volterra, without gamma
+    ({FILL_IN: "    return np.full((2, 2), np.nan)"}, HARES_WRONG),        # NaN is never right
+    ({FILL_IN: "    return [0.4 - 0.01 * y - 2 * gamma * x, -0.01 * x, 0.003 * y, 0.003 * x - 0.3]"},
+     "Exercise 3: not yet (hares_jacobian must return a 2 x 2 matrix"),
+    ({FILL_IN: "    return [[q, 0], [0, 0]]"}, "got: NameError: name 'q' is not defined"),
+    ({FILL_IN: "    return [[((0.4 - 0.01 * y) * x - gamma * x ** 2) / x - gamma * x, -0.01 * x], "
+               "[0.003 * y, 0.003 * x - 0.3]]"},                    # right for x > 0, fails at x = 0
+     "got: ZeroDivisionError"),
+])
+def test_notebook_18_particular_answers(answers, message):
+    try:
+        text = printed(execute(with_answers(NAME_18, answers)))
+    except Exception as problem:                               # a wrong answer must never stop the notebook
+        pytest.fail(f"the notebook stopped: {str(problem)[-300:]}")
+    assert message in text
+
+
+def test_notebook_18_section_7_can_be_run_again_after_exercise_3():
+    # the lesson of notebook 15: no global name of the sections is redefined by an exercise
+    nb = with_answers(NAME_18, EXERCISES[NAME_18]["answers"])
+    section_7 = [cell.source for cell in nb.cells if cell.cell_type == "code"
+                 and ("def pendulum" in cell.source or "def lotka_volterra" in cell.source
+                      or "def plot_foxes" in cell.source)]
+    check = next(cell for cell in nb.cells if cell.cell_type == "code" and "CHECK_POINTS = " in cell.source)
+    assert len(section_7) == 3
+    nb.cells.extend([nbformat.v4.new_code_cell(source) for source in section_7]
+                    + [nbformat.v4.new_code_cell(check.source)])
+    assert printed(execute(nb)).count("Exercise 3: correct at all 15 points") == 2
+
+
 def test_is_exact_written_with_an_equation_gets_a_hint_not_a_traceback():
     name = "12_Exact_Equations.ipynb"
     text = printed(execute(with_answers(name, {FILL_IN: "    return sp.Eq(sp.diff(M, y), sp.diff(N, x))"})))
@@ -680,6 +928,19 @@ def test_an_error_still_stops_a_notebook_that_uses_the_library():
 # Slider functions at the ends of their sliders: the cases that used to stop with a traceback
 # or draw an empty picture (review of 2026-11-17). Each line is run in a cell added at the end.
 EXTREMES = {
+    NAME_18: ("plot_family(p=-3.0)", "plot_family(p=3.0)", "plot_family(p=0.0)", "plot_family(p=1.0)",
+              "plot_family(p=-3.0 + 30 * 0.1)", "plot_family(p=-3.0 + 40 * 0.1)",     # 0, 1 from the slider
+              "plot_family(p=1e-10)", "plot_family(p=-1e-10)", "plot_family(p=1.0 - 1e-10)",
+              "plot_family(p=1.0 + 1e-10)",
+              "plot_foxes(foxes=10.0)", "plot_foxes(foxes=200.0)",
+              "plot_foxes(foxes=40.0)",                               # the start (50, 40): the fewest hares
+              "plot_foxes(foxes=10.0 + 19 * 10.0)"),                  # 200 as the slider gives it
+    NAME_17: ("plot_cases(c=0.0)", "plot_cases(c=4.0)", "plot_cases(c=2.0)",
+              "plot_cases(c=0.0 + 20 * 0.1)",                         # 2.0 as the slider gives it
+              "plot_cases(c=2.0 - 1e-10)", "plot_cases(c=2.0 + 1e-10)",
+              "plot_modes(x2_start=-2.0)", "plot_modes(x2_start=2.0)", "plot_modes(x2_start=-1.0)",
+              "plot_modes(x2_start=-2.0 + 10 * 0.1)",                 # -1.0 as the slider gives it
+              "plot_modes(x2_start=0.0)"),
     NAME_16: ("plot_bvp(lam=1.0)", "plot_bvp(lam=4.0)", "plot_bvp(lam=9.0)", "plot_bvp(lam=0.2)", "plot_bvp(lam=10.0)",
               "plot_bvp(lam=0.9999999999)", "plot_bvp(lam=1.1)", "plot_bvp(lam=0.2 + 8 * 0.1)",     # 1.0 as the slider gives it
               "plot_beam(holding=0, uneven=-1.0)", "plot_beam(holding=0, uneven=1.0)", "plot_beam(holding=1, uneven=-1.0)",

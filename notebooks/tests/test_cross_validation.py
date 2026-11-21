@@ -314,3 +314,158 @@ def test_beam_deflection_agrees_with_solve_bvp(left, right):
     result = solve_bvp(rhs, boundary, mesh, np.zeros((4, mesh.size)), tol=1e-10)
     assert result.success
     assert ol.beam_deflection(mesh, load, left, right, length, rigidity) == pytest.approx(result.sol(mesh)[0], rel=1e-6, abs=1e-8)
+
+
+# --- linear systems x' = A x (notebook 17) ------------------------------------------------------
+SYSTEM_CASES = 8                            # random matrices per case
+ENTRY_RANGE = (-3, 4)                       # integers from -3 to 3 for the SymPy comparisons
+NUMERATOR_RANGE = (-9, 10)                  # rational coefficients k / DENOMINATOR, k from -9 to 9
+DENOMINATOR = 4
+SYSTEM_END = 2.0
+
+
+def matrices_of_case(case):
+    """Seeded random 2 x 2 matrices of one case (a defective one: lambda I + u w^T with w.u = 0)."""
+    rng = np.random.default_rng(SEED)
+    found = []
+    while len(found) < SYSTEM_CASES:
+        if case == ol.CASE_REPEATED_ONE:
+            p, q, size, value = rng.integers(*ENTRY_RANGE, 4)
+            if (p, q) != (0, 0) and size != 0:
+                found.append(value * np.eye(2) + size * np.outer([p, q], [-q, p]))
+            continue
+        A = rng.integers(*ENTRY_RANGE, (2, 2)).astype(float)
+        discriminant = np.trace(A) ** 2 - 4 * np.linalg.det(A)
+        if (case == ol.CASE_REAL and discriminant > 0.5) or (case == ol.CASE_COMPLEX and discriminant < -0.5):
+            found.append(A)
+    return found
+
+
+@pytest.mark.parametrize("case", [ol.CASE_REAL, ol.CASE_COMPLEX, ol.CASE_REPEATED_ONE])
+def test_eigen_solution_agrees_with_solve_ivp(case):
+    points = np.linspace(0.0, SYSTEM_END, 21)
+    for A in matrices_of_case(case):
+        assert ol.two_by_two_case(A).case == case
+        start = draws(-1.0, 1.0, 2)
+        reference = integrate(lambda s, v, A=A: A @ v, SYSTEM_END, start, points)
+        assert ol.eigen_solution(points, A, start) == pytest.approx(reference.T, rel=1e-8, abs=1e-9)
+
+
+@pytest.mark.parametrize("order", [1, 2, 3, 4])
+def test_companion_matrix_has_the_characteristic_polynomial_sympy_finds(order):
+    lam = sp.symbols("lambda")
+    numerators = np.random.default_rng(SEED + order).integers(*NUMERATOR_RANGE, order + 1)
+    coefficients = [sp.Rational(int(value), DENOMINATOR) for value in numerators]
+    if coefficients[0] == 0:
+        coefficients[0] = sp.Integer(1)
+    matrix = sp.Matrix(ol.companion_matrix([float(value) for value in coefficients])).applyfunc(sp.nsimplify)
+    polynomial = sum(value * lam ** (order - index) for index, value in enumerate(coefficients))
+    expected = polynomial / coefficients[0]
+    assert sp.simplify(matrix.charpoly(lam).as_expr() - expected) == 0
+
+
+def _order(z):
+    return (z.real, -z.imag)
+
+
+@pytest.mark.parametrize("case", [ol.CASE_REAL, ol.CASE_COMPLEX, ol.CASE_REPEATED_ONE])
+def test_two_by_two_case_agrees_with_sympy_eigenvects(case):
+    for A in matrices_of_case(case):
+        found = ol.two_by_two_case(A)
+        exact = sp.Matrix(A.astype(int).tolist()).eigenvects()
+        values = sorted((complex(value) for value, times, _ in exact for _ in range(times)), key=_order)
+        assert sorted(np.array(found.eigenvalues, dtype=complex), key=_order) == pytest.approx(values)
+        geometric = sum(len(vectors) for _, _, vectors in exact)
+        assert len(found.eigenvectors) == geometric
+        for value, vector in zip(found.eigenvalues, found.eigenvectors, strict=False):
+            sympy_vector = next(np.array(vectors[0], dtype=complex).ravel()
+                                for exact_value, _, vectors in exact
+                                if abs(complex(exact_value) - value) < 1e-9)
+            k = np.vdot(sympy_vector, vector) / np.vdot(sympy_vector, sympy_vector)
+            assert abs(k) > 0 and np.allclose(vector, k * sympy_vector, atol=1e-12)    # parallel to SymPy's
+
+
+# --- the phase plane and nonlinear systems (notebook 18) ----------------------------------------
+RANDOM_MATRICES = 500                       # seeded random integer matrices
+PHASE_ENTRY_RANGE = (-5, 6)                 # integers from -5 to 5: singular and repeated ones included
+JACOBIAN_POINTS = 5                         # seeded random points per system
+POINT_RANGE = (-2.0, 2.0)
+JACOBIAN_AGREEMENT = 1e-8                   # relative, as in test_odelib.py
+X, Y = sp.symbols("x y", real=True)
+# Lebl's systems: Examples 8.1.1, 8.2.1, 8.2.2 and Exercises 8.1.3 (a)-(c), 8.2.1 (a)-(c), 8.2.4
+SYSTEMS = {
+    "Example 8.1.1": (Y, -X + X ** 2),
+    "Example 8.2.1": (-Y - X ** 2, -X + Y ** 2),
+    "Example 8.2.2": (Y + Y ** 2 * sp.exp(X), X),
+    "Exercise 8.1.3 (a)": (X ** 2 - Y ** 2, X ** 2 + Y ** 2 - 1),
+    "Exercise 8.1.3 (b)": (-Y, 3 * X + Y * X ** 2),
+    "Exercise 8.1.3 (c)": (X ** 2 + Y, Y ** 2 + X),
+    "Exercise 8.2.1 (a)": (-X + 3 * X ** 2, -Y),
+    "Exercise 8.2.1 (b)": (X ** 2 + Y ** 2 - 1, X),
+    "Exercise 8.2.1 (c)": (Y * sp.exp(X), Y - X + Y ** 2),
+    "Exercise 8.2.4": (-X * Y, X ** 2 - 1 - Y),
+}
+
+
+def exact_kind(matrix):
+    """The picture of x' = A x from SymPy's exact eigenvalues (Lebl, Table 3.5.1 and the borderlines)."""
+    if matrix.is_zero_matrix:
+        return ol.KIND_ALL_EQUILIBRIA
+    values = [value for value, times in matrix.eigenvals().items() for _ in range(times)]
+    real = [sp.re(sp.simplify(value)) for value in values]
+    imaginary = [sp.im(sp.simplify(value)) for value in values]
+    zeros = [sp.simplify(value) == 0 for value in values]
+    if any(zeros):
+        return ol.KIND_PARALLEL_LINES if all(zeros) else ol.KIND_LINE_OF_EQUILIBRIA
+    if imaginary[0] != 0:
+        return (ol.KIND_CENTER if real[0] == 0 else ol.KIND_SPIRAL_SOURCE if real[0] > 0
+                else ol.KIND_SPIRAL_SINK)
+    if sp.simplify(values[0] - values[1]) == 0:
+        star = matrix == values[0] * sp.eye(2)
+        if values[0] > 0:
+            return ol.KIND_STAR_SOURCE if star else ol.KIND_DEGENERATE_SOURCE
+        return ol.KIND_STAR_SINK if star else ol.KIND_DEGENERATE_SINK
+    if real[0] * real[1] < 0:
+        return ol.KIND_SADDLE
+    return ol.KIND_SOURCE if real[0] > 0 else ol.KIND_SINK
+
+
+def test_classify_linear_2d_agrees_with_sympy_on_random_integer_matrices():
+    matrices = np.random.default_rng(SEED).integers(*PHASE_ENTRY_RANGE, (RANDOM_MATRICES, 2, 2))
+    kinds = set()
+    for A in matrices:
+        expected = exact_kind(sp.Matrix(A.tolist()))
+        assert ol.classify_linear_2d(A).kind == expected, A
+        kinds.add(expected)
+    assert {ol.KIND_SADDLE, ol.KIND_SOURCE, ol.KIND_SINK, ol.KIND_SPIRAL_SOURCE, ol.KIND_SPIRAL_SINK,
+            ol.KIND_CENTER, ol.KIND_LINE_OF_EQUILIBRIA} <= kinds          # the draw reaches the main kinds
+
+
+@pytest.mark.parametrize("name", sorted(SYSTEMS))
+def test_jacobian_agrees_with_sympy(name):
+    f, g = SYSTEMS[name]
+    exact = sp.lambdify((X, Y), sp.Matrix([f, g]).jacobian([X, Y]), "numpy")
+    field = sp.lambdify((X, Y), (f, g), "numpy")
+    for x, y in draws(*POINT_RANGE, (JACOBIAN_POINTS, 2)):
+        expected = np.array(exact(x, y), dtype=float)
+        assert ol.jacobian(field, (x, y)) == pytest.approx(expected, rel=JACOBIAN_AGREEMENT,
+                                                           abs=JACOBIAN_AGREEMENT)
+
+
+@pytest.mark.parametrize("name", sorted(SYSTEMS))
+def test_classify_equilibrium_2d_agrees_with_sympy(name):
+    f, g = SYSTEMS[name]
+    field = sp.lambdify((X, Y), (f, g), "numpy")
+    jacobian = sp.Matrix([f, g]).jacobian([X, Y])
+    points = [point for point in sp.solve([f, g], [X, Y], dict=True)
+              if point[X].is_real and point[Y].is_real]
+    assert points, name
+    for point in points:
+        exact_j = sp.simplify(jacobian.subs(point))
+        kind = exact_kind(exact_j)
+        found = ol.classify_equilibrium_2d(field, (float(point[X]), float(point[Y])))
+        assert found.linear.kind == kind, (name, point)
+        repelling_line = kind == ol.KIND_LINE_OF_EQUILIBRIA and exact_j.trace() > 0     # unstable (Lyapunov)
+        inconclusive = not repelling_line and kind in (ol.KIND_CENTER, ol.KIND_LINE_OF_EQUILIBRIA,
+                                                       ol.KIND_PARALLEL_LINES, ol.KIND_ALL_EQUILIBRIA)
+        assert (found.stability == ol.STABILITY_INCONCLUSIVE) == inconclusive
