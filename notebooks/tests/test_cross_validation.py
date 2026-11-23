@@ -469,3 +469,124 @@ def test_classify_equilibrium_2d_agrees_with_sympy(name):
         inconclusive = not repelling_line and kind in (ol.KIND_CENTER, ol.KIND_LINE_OF_EQUILIBRIA,
                                                        ol.KIND_PARALLEL_LINES, ol.KIND_ALL_EQUILIBRIA)
         assert (found.stability == ol.STABILITY_INCONCLUSIVE) == inconclusive
+
+
+# --- the Laplace transform (notebook 19; Lebl, Sections 6.1 and 6.2) --------------------------------
+ROW_AGREEMENT = 1e-12                       # two ways of computing one formula of the table (relative)
+LAPLACE_SETS = 4                            # seeded random sets of constants (a, omega, n)
+LAPLACE_OFFSETS = (0.5, 1.5, 4.0)           # each transform is compared at s = s_min + offset
+LAPLACE_QUARTERS = (-8, 9)                  # a is drawn among -8/4, ..., 8/4 and omega among 1/4, ..., 8/4
+LAPLACE_POWERS = (0, 7)                     # n is drawn among 0, ..., 6
+LAPLACE_TIMES = np.linspace(0.0, 3.0, 13)   # where two functions of t are compared
+
+
+def promised(found, exact, s):
+    """True when found is as near to exact as laplace_numeric promises: rtol max(1 / max(|s|, 1), |F(s)|)."""
+    return abs(found - exact) <= ol.LAPLACE_RTOL * max(1 / max(abs(s), ol.LAPLACE_UNIT_RATE), abs(exact))
+S = sp.symbols("s")
+T_POSITIVE = sp.symbols("t", positive=True)     # for inverse transforms: SymPy then drops its step function
+
+
+def laplace_constants():
+    """The constants of the notebook's table, then seeded random ones (exact fractions for SymPy)."""
+    rng = np.random.default_rng(SEED)
+    sets = [(sp.Rational(ol.LAPLACE_DEMO_A), sp.Rational(ol.LAPLACE_DEMO_OMEGA), ol.LAPLACE_DEMO_N)]
+    for _ in range(LAPLACE_SETS):
+        a = sp.Rational(int(rng.integers(*LAPLACE_QUARTERS)), 4)
+        omega = sp.Rational(int(rng.integers(1, LAPLACE_QUARTERS[1])), 4)
+        sets.append((a, omega, int(rng.integers(*LAPLACE_POWERS))))
+    return sets
+
+
+def table_in_sympy(a, omega, n):
+    """The functions f(t) of Lebl's Table 6.1.1 as SymPy expressions, by the names of ol.laplace_table."""
+    return {"1": sp.Integer(1), "t": t, "t^2": t ** 2, "t^n": t ** n, "e^(-at)": sp.exp(-a * t),
+            "sin": sp.sin(omega * t), "cos": sp.cos(omega * t), "sinh": sp.sinh(omega * t),
+            "cosh": sp.cosh(omega * t)}
+
+
+@pytest.mark.parametrize("a, omega, n", laplace_constants())
+def test_laplace_table_agrees_with_sympy_laplace_transform(a, omega, n):
+    functions = table_in_sympy(a, omega, n)
+    table = ol.laplace_table(a=float(a), omega=float(omega), n=n)
+    assert [row.name for row in table] == list(functions)
+    for row in table:
+        transform, edge, _ = sp.laplace_transform(functions[row.name], t, S)
+        assert float(edge) == pytest.approx(row.s_min)              # SymPy: the transform holds for s > edge
+        exact = sp.lambdify(S, transform, "numpy")
+        for offset in LAPLACE_OFFSETS:
+            s = row.s_min + offset
+            assert row.transform(s) == pytest.approx(float(exact(s)), rel=ROW_AGREEMENT)
+            assert promised(ol.laplace_numeric(row.time, s), float(exact(s)), s)
+        assert row.time(LAPLACE_TIMES) == pytest.approx(
+            sp.lambdify(t, functions[row.name], "numpy")(LAPLACE_TIMES) + 0 * LAPLACE_TIMES)
+
+
+# F(s), its partial fractions as printed, and its inverse transform f(t) as printed
+INVERSES = {
+    "Example 6.1.6": ((S ** 2 + S + 1) / (S ** 3 + S), 1 / S + 1 / (S ** 2 + 1), 1 + sp.sin(T_POSITIVE)),
+    "Example 6.1.7": (1 / (S ** 2 + 4 * S + 8), 1 / ((S + 2) ** 2 + 4),
+                      sp.exp(-2 * T_POSITIVE) * sp.sin(2 * T_POSITIVE) / 2),
+    "Example 6.2.1": (S / ((S ** 2 + 1) * (S ** 2 + 4)) + 1 / (S ** 2 + 1),
+                      S / (3 * (S ** 2 + 1)) - S / (3 * (S ** 2 + 4)) + 1 / (S ** 2 + 1),
+                      sp.cos(T_POSITIVE) / 3 - sp.cos(2 * T_POSITIVE) / 3 + sp.sin(T_POSITIVE)),
+    "Example 6.2.4": (1 / (S * (S ** 2 + 1)), 1 / S - S / (S ** 2 + 1), 1 - sp.cos(T_POSITIVE)),
+    "Exercise 6.1.13": (8 / (S ** 3 * (S + 2)), 4 / S ** 3 - 2 / S ** 2 + 1 / S - 1 / (S + 2),
+                        2 * T_POSITIVE ** 2 - 2 * T_POSITIVE + 1 - sp.exp(-2 * T_POSITIVE)),
+    "Exercise 6.1.7": (1 / ((S - 1) ** 2 * (S + 1)),
+                       -1 / (4 * (S - 1)) + 1 / (2 * (S - 1) ** 2) + 1 / (4 * (S + 1)),
+                       (2 * T_POSITIVE - 1) * sp.exp(T_POSITIVE) / 4 + sp.exp(-T_POSITIVE) / 4),
+    # the circuit of notebook 19: q'' + 2 q' + 5 q = 8 e^(-t), q(0) = 1, q'(0) = 0
+    "notebook 19, circuit": ((8 / (S + 1) + S + 2) / (S ** 2 + 2 * S + 5),
+                             2 / (S + 1) - S / (S ** 2 + 2 * S + 5),
+                             sp.exp(-T_POSITIVE) * (2 - sp.cos(2 * T_POSITIVE) + sp.sin(2 * T_POSITIVE) / 2)),
+    # the same circuit with R = 6 ohm: the root -1 of the source is also a root of the circuit
+    "notebook 19, R = 6": ((8 / (S + 1) + S + 6) / (S ** 2 + 6 * S + 5),
+                           3 / (4 * (S + 1)) + 2 / (S + 1) ** 2 + 1 / (4 * (S + 5)),
+                           (sp.Rational(3, 4) + 2 * T_POSITIVE) * sp.exp(-T_POSITIVE)
+                           + sp.exp(-5 * T_POSITIVE) / 4),
+    # and with a battery of 8 V in place of the fading source (Exercise 3(v))
+    "notebook 19, battery": ((8 / S + S + 2) / (S ** 2 + 2 * S + 5),
+                             8 / (5 * S) - 3 * (S + 2) / (5 * (S ** 2 + 2 * S + 5)),
+                             sp.Rational(8, 5) - sp.Rational(3, 5) * sp.exp(-T_POSITIVE) * (
+                                 sp.cos(2 * T_POSITIVE) + sp.sin(2 * T_POSITIVE) / 2)),
+    # Exercise 2(d) of notebook 19 (Lebl, Exercise 6.2.4 with numbers):
+    # x'' + 2 x' + 10 x = 0, x(0) = 2, x'(0) = 1
+    "notebook 19, spring": ((2 * S + 5) / (S ** 2 + 2 * S + 10),
+                            2 * (S + 1) / ((S + 1) ** 2 + 9) + 3 / ((S + 1) ** 2 + 9),
+                            sp.exp(-T_POSITIVE) * (2 * sp.cos(3 * T_POSITIVE) + sp.sin(3 * T_POSITIVE))),
+}
+
+
+@pytest.mark.parametrize("name", sorted(INVERSES))
+def test_the_inverse_transforms_of_notebook_19_agree_with_sympy(name):
+    transform, fractions, function = INVERSES[name]
+    assert sp.simplify(sp.apart(transform, S) - fractions) == 0          # the partial fractions as printed
+    inverse = sp.inverse_laplace_transform(transform, S, T_POSITIVE)
+    points = LAPLACE_TIMES[1:]                                           # t > 0
+    assert sp.lambdify(T_POSITIVE, inverse, "numpy")(points) == pytest.approx(
+        sp.lambdify(T_POSITIVE, function, "numpy")(points))
+    forward = sp.lambdify(T_POSITIVE, function, "numpy")                 # and the answer transformed forward
+    edge = max([float(sp.re(root)) for root in sp.roots(sp.denom(sp.together(transform)), S)])
+    for offset in LAPLACE_OFFSETS:
+        s = edge + offset
+        assert promised(ol.laplace_numeric(forward, s), float(transform.subs(S, s)), s)
+
+
+@pytest.mark.parametrize("coefficients, right, start, name", [
+    ((1, 0, 1), sp.cos(2 * t), (0, 1), "Example 6.2.1"),             # x'' + x = cos 2t, x(0) = 0, x'(0) = 1
+    ((1, 2, 5), 8 * sp.exp(-t), (1, 0), "notebook 19, circuit"),
+    ((1, 6, 5), 8 * sp.exp(-t), (1, 0), "notebook 19, R = 6"),
+    ((1, 2, 5), 8 + 0 * t, (1, 0), "notebook 19, battery"),
+    ((1, 2, 10), 0 * t, (2, 1), "notebook 19, spring"),
+])
+def test_the_initial_value_problems_of_notebook_19_against_dsolve_and_forced_response(coefficients, right,
+                                                                                      start, name):
+    a, b, c = coefficients
+    equation = sp.Eq(a * y(t).diff(t, 2) + b * y(t).diff(t) + c * y(t), right)
+    exact = closed_form(equation, {y(0): start[0], y(t).diff(t).subs(t, 0): start[1]})
+    printed = sp.lambdify(T_POSITIVE, INVERSES[name][2], "numpy")
+    assert printed(LAPLACE_TIMES) == pytest.approx(exact(LAPLACE_TIMES))
+    # the third, independent answer of the notebook: variation of parameters by quadrature
+    forcing = sp.lambdify(t, right, "numpy")
+    assert ol.forced_response(LAPLACE_TIMES, a, b, c, forcing, *start) == pytest.approx(exact(LAPLACE_TIMES))

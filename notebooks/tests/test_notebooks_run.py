@@ -54,7 +54,40 @@ HARES_TRANSPOSED = "    return [[0.4 - 0.01 * y - 2 * gamma * x, 0.003 * y], [-0
 HARES_ARRAY = ("    return np.array([[0.4 - 0.01 * y - 2 * gamma * x, -0.01 * x], "
                "[0.003 * y, 0.003 * x - 0.3]])")
 HARES_WRONG = "Exercise 3: not yet. At x = "
+NAME_19 = "19_Laplace_Transform.ipynb"
+WRONG_FORMULA = "not yet (your formula does not give the right values"
+SPRING_NOT_DIVIDED = "my_spring_2d = sp.exp(-t) * (2 * sp.cos(3 * t) + 3 * sp.sin(3 * t))"    # not 3 / omega
+SPRING_WITH_PHASE = "my_spring_2d = sp.sqrt(5) * sp.exp(-t) * sp.cos(3 * t - sp.atan(sp.Rational(1, 2)))"
 EXERCISES = {
+    NAME_19: {
+        "answers": {
+            "my_transform_1a = None": "my_transform_1a = 1 / (s - 3)",
+            "my_edge_1a = None": "my_edge_1a = 3",
+            "my_product_rule = None": "my_product_rule = False",
+            "my_form = None": "my_form = 2",
+            "my_rest = None": "my_rest = -2 * s + 1",
+            "my_transform_2a = None": "my_transform_2a = 2 / s ** 3",
+            "my_inverse_2b = None": "my_inverse_2b = 2 * t ** 2 - 2 * t + 1 - sp.exp(-2 * t)",
+            "my_transform_2c = None": "my_transform_2c = 1 / (s ** 2 + 2 * s + 2)",
+            "my_spring_2d = None": "my_spring_2d = sp.exp(-t) * (2 * sp.cos(3 * t) + sp.sin(3 * t))",
+        },
+        "solved": ("Exercise 1a, transform: correct", "Exercise 1a, smallest c: correct",
+                   "Exercise 1b: correct", "Exercise 1c: correct", "Exercise 1d: correct",
+                   "Exercise 2a: correct", "Exercise 2b: correct", "Exercise 2c: correct",
+                   "Exercise 2d: correct"),
+        "unsolved": ("Exercise 1a, transform: no answer yet", "Exercise 1a, smallest c: no answer yet",
+                     "Exercise 1c: no answer yet", "Exercise 2d: no answer yet"),
+        "wrong": ({"my_transform_1a = None": "my_transform_1a = 1 / (s + 3)",       # the sign of a
+                   "my_edge_1a = None": "my_edge_1a = -3",
+                   "my_product_rule = None": "my_product_rule = True",
+                   "my_form = None": "my_form = 1",
+                   "my_rest = None": "my_rest = -2 * s - 1",                        # the sign of x'(0)
+                   "my_transform_2a = None": "my_transform_2a = 1 / s ** 3",        # n! forgotten
+                   "my_inverse_2b = None": "my_inverse_2b = 4 * t ** 2 - 2 * t + 1 - sp.exp(-2 * t)",
+                   "my_transform_2c = None": "my_transform_2c = 1 / ((s - 1) ** 2 + 1)",    # the wrong shift
+                   "my_spring_2d = None": SPRING_NOT_DIVIDED},
+                  "Exercise 2d: " + WRONG_FORMULA),
+    },
     NAME_18: {
         "answers": {
             "my_kind_357 = None": 'my_kind_357 = "spiral source"',
@@ -820,6 +853,74 @@ def test_notebook_18_section_7_can_be_run_again_after_exercise_3():
     assert printed(execute(nb)).count("Exercise 3: correct at all 15 points") == 2
 
 
+@pytest.mark.parametrize("answers, message", [
+    # other accepted forms: any equivalent formula, 3.0 for 3, an amplitude and a phase
+    ({"my_transform_1a = None": "my_transform_1a = (s - 3) ** -1"}, "Exercise 1a, transform: correct"),
+    ({"my_edge_1a = None": "my_edge_1a = 3.0"}, "Exercise 1a, smallest c: correct"),
+    ({"my_rest = None": "my_rest = 1 - 2 * s"}, "Exercise 1d: correct"),
+    ({"my_transform_2a = None": "my_transform_2a = sp.factorial(2) * s ** -3"}, "Exercise 2a: correct"),
+    ({"my_inverse_2b = None": "my_inverse_2b = 1 - 2 * t + 2 * t ** 2 - 1 / sp.exp(2 * t)"},
+     "Exercise 2b: correct"),
+    ({"my_transform_2c = None": "my_transform_2c = 1 / ((s + 1) ** 2 + 1)"}, "Exercise 2c: correct"),
+    ({"my_spring_2d = None": SPRING_WITH_PHASE}, "Exercise 2d: correct"),
+    # wrong answers, each with its message
+    ({"my_transform_1a = None": "my_transform_1a = 1 / (t - 3)"},
+     "Exercise 1a, transform: not yet (write the formula with the letter s only; it also contains t)"),
+    ({"my_transform_1a = None": 'my_transform_1a = "1 / (s - 3)"'},
+     "Exercise 1a, transform: not yet (type the formula without quotes)"),
+    ({"my_edge_1a = None": "my_edge_1a = -3"}, "Exercise 1a, smallest c: not yet (your value -3, try again)"),
+    ({"my_product_rule = None": "my_product_rule = True"}, "Exercise 1b: not yet"),
+    ({"my_form = None": "my_form = 3"}, "Exercise 1c: not yet (your value 3, try again)"),
+    ({"my_form = None": 'my_form = "2"'}, "Exercise 1c: not yet (type your answer without quotes"),
+    ({"my_rest = None": "my_rest = s ** 2 * X - 2 * s + 1"},
+     "Exercise 1d: not yet (write the formula with the letter s only; it also contains X)"),
+    ({"my_rest = None": "my_rest = 2 * s - 1"}, "Exercise 1d: " + WRONG_FORMULA),
+    ({"my_transform_2a = None": "my_transform_2a = 2 / s ** 2"}, "Exercise 2a: " + WRONG_FORMULA),
+    ({"my_inverse_2b = None": "my_inverse_2b = 8 / (s ** 3 * (s + 2))"},            # the question typed back
+     "Exercise 2b: not yet (write the formula with the letter t only; it also contains s)"),
+    ({"my_transform_2c = None": "my_transform_2c = 1 / (s ** 2 + 1)"}, "Exercise 2c: " + WRONG_FORMULA),
+    ({"my_spring_2d = None": "my_spring_2d = 0"}, "Exercise 2d: " + WRONG_FORMULA),
+    ({"my_spring_2d = None": "my_spring_2d = sp.exp(-t) * (2 * sp.cos(3 * t) - sp.sin(3 * t))"},
+     "Exercise 2d: " + WRONG_FORMULA),
+])
+def test_notebook_19_particular_answers(answers, message):
+    try:
+        text = printed(execute(with_answers(NAME_19, answers)))
+    except Exception as problem:                               # a wrong answer must never stop the notebook
+        pytest.fail(f"the notebook stopped: {str(problem)[-300:]}")
+    assert message in text
+
+
+def test_notebook_19_sections_can_be_run_again_after_the_exercises():
+    # the lesson of notebook 15: no global name of the sections is redefined by an exercise
+    nb = with_answers(NAME_19, EXERCISES[NAME_19]["answers"])
+    again = [cell.source for cell in nb.cells if cell.cell_type == "code"
+             and "import odelib as ol" not in cell.source and "interact(" not in cell.source]
+    nb.cells.extend(nbformat.v4.new_code_cell(source) for source in again)
+    text = printed(execute(nb))
+    assert text.count("Exercise 2d: correct") == 2 and text.count("step 4: q(t) =") == 2
+
+
+@pytest.mark.parametrize("changes, line", [
+    # the numbers that the comments of the cells invite a student to change (clarity review of notebook 19)
+    ({"S_ONE = 1.0 ": "S_ONE = -1.0 "}, "for s = -1 "),
+    ({"S_ONE = 1.0 ": "S_ONE = 0.1 "}, "for s = 0.1 "),
+    ({"S_DEMO = 3.0 ": "S_DEMO = 1.0 ", "DECAY = 2.0 ": "DECAY = 5.0 "},
+     "L{e^(-5t)} at s = 1: the integral gives 0.16666667"),
+    ({"S_INSIDE, S_OUTSIDE = 3.0, 1.0": "S_INSIDE, S_OUTSIDE = 40.0, 2.5"},     # no bare AssertionError
+     "L{e^(t^2)} at s = 40: a number came out"),
+    ({"S_INSIDE, S_OUTSIDE = 3.0, 1.0": "S_INSIDE, S_OUTSIDE = 40.0, 2.5"},
+     "L{e^(2t)} at s = 2.5: a number came out, 2."),
+    ({"g = 1 + sp.sin(2 * t)": "g = sp.exp(-t) + t ** 2"}, "g(0) = 1, g'(0) = -1"),
+])
+def test_notebook_19_survives_the_numbers_a_student_changes(changes, line):
+    try:
+        text = printed(execute(with_answers(NAME_19, changes)))
+    except Exception as problem:
+        pytest.fail(f"the notebook stopped: {str(problem)[-300:]}")
+    assert line in text
+
+
 def test_is_exact_written_with_an_equation_gets_a_hint_not_a_traceback():
     name = "12_Exact_Equations.ipynb"
     text = printed(execute(with_answers(name, {FILL_IN: "    return sp.Eq(sp.diff(M, y), sp.diff(N, x))"})))
@@ -928,6 +1029,14 @@ def test_an_error_still_stops_a_notebook_that_uses_the_library():
 # Slider functions at the ends of their sliders: the cases that used to stop with a traceback
 # or draw an empty picture (review of 2026-11-17). Each line is run in a cell added at the end.
 EXTREMES = {
+    NAME_19: ("plot_area(s=0.5)", "plot_area(s=5.0)", "plot_area(s=1.0)",
+              "plot_area(s=0.5 + 45 * 0.1)",                          # 5.0 as the slider gives it
+              "plot_circuit(R=0.5)", "plot_circuit(R=8.0)",
+              "plot_circuit(R=0.5 + 75 * 0.1)",                       # 8.0 as the slider gives it
+              "plot_circuit(R=4.4)", "plot_circuit(R=4.5)",           # each side of the critical resistance
+              "plot_circuit(R=20 ** 0.5)", "plot_circuit(R=20 ** 0.5 - 1e-10)",
+              "plot_circuit(R=20 ** 0.5 + 1e-10)",
+              "plot_circuit(R=6.0)", "plot_circuit(R=0.5 + 55 * 0.1)"),   # other values
     NAME_18: ("plot_family(p=-3.0)", "plot_family(p=3.0)", "plot_family(p=0.0)", "plot_family(p=1.0)",
               "plot_family(p=-3.0 + 30 * 0.1)", "plot_family(p=-3.0 + 40 * 0.1)",     # 0, 1 from the slider
               "plot_family(p=1e-10)", "plot_family(p=-1e-10)", "plot_family(p=1.0 - 1e-10)",

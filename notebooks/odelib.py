@@ -57,6 +57,9 @@ The phase plane (notebook 18)
     trajectories                  the solutions from several starts at once, by RK4 (notebook 04)
     direction_field               arrows along (f, g) on a grid, all of one length (Lebl 3.1)
     phase_portrait                the trajectories through given points, both ways in time (Lebl 3.5, 8.1)
+The Laplace transform (notebook 19)
+    laplace_numeric               F(s) at one s, by the integral that defines it (Lebl 6.1)
+    laplace_table, LaplaceRow     Lebl's Table 6.1.1 as data: f(t), F(s) and the range of s (Lebl 6.1)
 Exercises
     check                         compare an answer found by hand with the expected one
     check_formula                 the same for a formula typed as a SymPy expression
@@ -75,7 +78,11 @@ KIND_PARALLEL_LINES, KIND_ALL_EQUILIBRIA, STABILITY_ASYMPTOTIC, STABILITY_STABLE
 STABILITY_INCONCLUSIVE, JACOBIAN_STEP, LINEARIZATION_RTOL, EQUILIBRIUM_TOL, REASON_LINEAR, REASON_CENTER,
 REASON_SINGULAR, REASON_SINGULAR_UNSTABLE, PORTRAIT_STEPS, ESCAPE_MARGIN, DIRECTION_GRID, ARROW_LENGTH,
 MIN_GRID, ARROW_WIDTH, TRAJECTORY_ARROW_AT,
-TRAJECTORY_WIDTH, START_DOT_SIZE, ARROW_HEAD_SIZE, ARROW_HEAD_SPAN, CHECK_TOLERANCE, ROUNDED, FORMULA_SAMPLES,
+TRAJECTORY_WIDTH, START_DOT_SIZE, ARROW_HEAD_SIZE, ARROW_HEAD_SPAN, LAPLACE_RTOL, LAPLACE_RTOL_RANGE,
+LAPLACE_HORIZON, LAPLACE_UNIT_RATE, LAPLACE_EDGES, LAPLACE_EDGE_RATIO, LAPLACE_SHIFTS,
+LAPLACE_GROWTH_TIMES, LAPLACE_SCAN, LAPLACE_JUMP_RATIO, LAPLACE_MAX_JUMPS,
+LAPLACE_DEMO_A, LAPLACE_DEMO_OMEGA, LAPLACE_DEMO_N, LAPLACE_ROW_NAMES,
+CHECK_TOLERANCE, ROUNDED, FORMULA_SAMPLES,
 RESIDUAL_ROUNDING, PORTRAIT_WORDS, STABILITY_WORDS, KIND_SYNONYMS; the guide and the hints:
 GUIDE_START, GUIDE_TYPING, GUIDE_TYPING_RULE, GUIDE_ERRORS, GUIDE_HOW, GUIDE_WORDS, GUIDE_TOPICS,
 GUIDE_WIDTH, HINT_LABEL, FUNCTION_NAMES, CONSTANT_NAMES, WORD_NAMES, SETUP_NAMES, GUIDE_PARTS_TYPED,
@@ -1609,6 +1616,347 @@ def phase_portrait(ax: Axes, f: Field, starts: ArrayLike, t_span: tuple[float, f
     ax.set_xlim(*x_range)
     ax.set_ylim(*y_range)
     return ax
+
+
+# ---------------------------------------------------------------------------
+# The Laplace transform (notebook 19; Lebl, Sections 6.1 and 6.2)
+# ---------------------------------------------------------------------------
+# Conventions: t >= 0 is the time and s, the variable of the transform, is a real number. With t in
+# seconds s is in 1/s, so that the exponent s t of the weight e^(-st) is a pure number.
+LAPLACE_RTOL = 1e-8             # accuracy asked of the integral: absolute below 1, see laplace_numeric
+LAPLACE_RTOL_RANGE = (1e-12, 1e-2)      # an rtol outside is refused (rounding decides below, nothing above)
+# e^(-700) is about 1e-304, near the smallest positive number of the computer, and e^(700) is near the
+# largest. Beyond |s| t = LAPLACE_HORIZON the weight e^(-st) cannot be trusted: laplace_numeric takes
+# the integrand as 0 there, after checking that it is already negligible at that time.
+LAPLACE_HORIZON = 700.0
+LAPLACE_UNIT_RATE = 1.0         # for |s| above it the variable is u = |s| t; below it u = t
+# The integral is the sum of the integrals over pieces. In u their edges double from the first number to
+# the second (about 1e-6 and 1e6), so that a feature of f is seen on every time scale in between; each
+# piece is one call of scipy's quad, with the QUAD_LIMIT of forced_response.
+LAPLACE_EDGES = (2.0 ** -20, 2.0 ** 20)
+LAPLACE_EDGE_RATIO = 2.0
+LAPLACE_SHIFTS = (1.0, 2.0 ** 0.5)      # the edges of the two computations are multiplied by these numbers
+LAPLACE_GROWTH_TIMES = (0.8, 0.9, 1.0)  # the parts of the last time T at which the growth of |f| is measured
+# Before integrating, f is looked at on LAPLACE_SCAN equal steps of every piece. A step on which f changes
+# more than LAPLACE_JUMP_RATIO times what it changes on a neighboring step is taken as a jump (a switch,
+# the end of a pulse); the jump is located by halving the step, and the integral is cut there, as if
+# ``breaks`` had named it. A cut that was not needed costs time only. A piece with more than
+# LAPLACE_MAX_JUMPS such steps is a fast oscillation, not a list of switches, and is left whole.
+LAPLACE_SCAN = 256
+LAPLACE_JUMP_RATIO = 8.0
+LAPLACE_MAX_JUMPS = 8
+LAPLACE_DEMO_A = 2.0            # the constants of the table printed in notebook 19: e^(-2t),
+LAPLACE_DEMO_OMEGA = 3.0        # sin(3t), cos(3t), sinh(3t), cosh(3t)
+LAPLACE_DEMO_N = 3              # and t^3 (a row of its own in Lebl's Table 6.1.1)
+LAPLACE_ROW_NAMES = ("1", "t", "t^2", "t^n", "e^(-at)", "sin", "cos", "sinh", "cosh")   # LaplaceRow.name
+
+
+def _one_real_number(name: str, value: float) -> float:
+    """The value as a finite float, or a ValueError that names the argument (None, text, a list, ...)."""
+    try:
+        refused = isinstance(value, (bool, np.bool_, str, bytes)) or np.iscomplexobj(value)
+        number = float("nan") if refused else float(value)
+    except (TypeError, ValueError):
+        number = float("nan")
+    if not np.isfinite(number):
+        raise ValueError(f"{name} must be one finite real number, got {value!r}")
+    return number
+
+
+def laplace_numeric(f: Callable[[float], float], s: float, *, rtol: float = LAPLACE_RTOL,
+                    breaks: Sequence[float] = ()) -> float:
+    """The Laplace transform F(s) of f at one real number s, straight from its definition.
+
+    Lebl, Section 6.1.1, used in notebook 19: F(s) is the integral from 0 to infinity of e^(-st) f(t) dt,
+    computed here by ``scipy.integrate.quad`` and by nothing else, so it is an independent check of a
+    table row, of a symbolic transform, and of an inverse transform (transform the answer forward and
+    compare). f is a function of one number t >= 0 (only t >= 0 is used) that returns one real number;
+    s is one real number. Units: with t in seconds, s is in 1/s and F(s) is in the units of f times
+    seconds. ``breaks`` are the times at which f jumps or has a corner (a switch, the ends of a pulse):
+    give them, and the integral is cut there.
+
+    How it is computed. With u = max(|s|, 1) t the interval is cut into pieces whose edges double, from
+    about 1e-6 to about 1e6 in u (LAPLACE_EDGES), at the breaks, and at the jumps of f that a first look
+    at f finds by itself (LAPLACE_SCAN equal steps on every piece; a jump is located by halving its
+    step); beyond the time
+    T = LAPLACE_HORIZON / |s| the weight e^(-st) is not a number of the computer any more and the
+    integrand is taken as 0. The sum over the pieces is computed twice, on two different sets of
+    pieces. The result is accepted when (a) scipy's quad is in doubt on no piece, (b) the errors it
+    estimates and the difference between the two sums are at most rtol max(1, |F(s)|), the rule of
+    ``check`` (for |s| > 1: rtol max(1 / |s|, |F(s)|), since transforms become small like 1 / s),
+    (c) T |e^(-sT) f(T)| is negligible by the same rule, and (d) |f| is not seen to grow faster and
+    faster than e^(st) just before T. Otherwise the function says that the integral does not
+    converge, or too slowly: that is the safe answer.
+
+    What is promised, and what is not (measured with the default rtol; "about", and not for every s):
+      * The accuracy is absolute, not relative: when |F(s)| is much smaller than rtol max(1, 1 / |s|)
+        (t^10 at s = 30, for example) the digits returned mean nothing.
+      * Near the edge of the range of the transform the answer is a refusal, not a number: for
+        f(t) = e^(ct), s must be about 4% of |s| above the edge c; 1 and t^n (edge 0) are computed
+        for s above about 1e-5; sin(omega t) and cos(omega t) for s above about omega / 200 (slowly:
+        up to 0.1 second of computing). At s = 0 only functions that die out like an exponential are
+        computed
+        (1 / (1 + t)^2 is refused).
+      * A numerical integral cannot prove convergence. A function that grows faster than every
+        exponential is refused only when its growth shows before the time T: e^(t^2) is refused for
+        s up to about 36, and for larger s a number is returned (about 1 / s, the integral up to T)
+        although the transform does not exist; t^t gives a number from s of about 6. In the same way
+        a function that is infinite at a time t0 > 0 (tan t at pi / 2, 1 / (t - 1.3) at 1.3) is
+        refused only while the weight e^(-s t0) does not hide the infinity (tan t: s up to about 17;
+        1 / (t - 1.3): s up to about 28) or when the first look at f falls on t0 itself; for larger s
+        a number may be returned. Use this function to check a transform that is known to exist, not
+        to decide whether one exists.
+      * Switches and pulses are found without help when they are wider than about 1/200 of their
+        distance from t = 0 (a pulse 0.03 wide at t = 5, on top of any smooth function): the integral
+        is cut at their ends. A narrower one (a pulse 0.001 wide at t = 5) can be missed, and then
+        a wrong number is returned with no error, the transform of f without the pulse: name its
+        ends in ``breaks`` and it is computed. e^(-at) is right up to a of about 1e8.
+
+    ValueError, with one sentence: s that is not a finite real number; f that is not a function, that
+    does not take one number, that returns something that is not one real number (text, a complex
+    number), or that stops with an error of its own (the sentence quotes it); rtol outside
+    LAPLACE_RTOL_RANGE; breaks that are not finite times >= 0; an integral that does not converge (s
+    at or below the edge of the range of the transform, as e^(2t) at s = 1; a function without a
+    transform, as 1/t for every s, or e^(t^2) and tan t for moderate s, see above; f not finite at
+    some t that the integral reaches). SciPy is imported here, not at the top: the rest of odelib
+    needs NumPy only.
+    """
+    import math
+
+    from scipy.integrate import quad
+
+    rtol = _one_real_number("rtol", rtol)
+    if not LAPLACE_RTOL_RANGE[0] <= rtol <= LAPLACE_RTOL_RANGE[1]:
+        raise ValueError(f"rtol must be between {LAPLACE_RTOL_RANGE[0]:g} and {LAPLACE_RTOL_RANGE[1]:g}, "
+                         f"got {rtol!r}")
+    if not callable(f):
+        raise ValueError("f must be a function of one number, for example lambda t: np.exp(-2 * t)")
+    rate = _one_real_number("s", s) + 0.0                 # + 0.0: -0.0 is written 0
+    try:
+        jumps = [math.nan] if isinstance(breaks, (str, bytes)) else sorted(
+            {_one_real_number("a break", point) for point in breaks})
+    except (TypeError, ValueError):                       # not a list, or a point that is not a number
+        jumps = [math.nan]
+    if not all(math.isfinite(point) and point >= 0 for point in jumps):
+        raise ValueError(f"breaks must be a list of finite times, each 0 or more, got {breaks!r}")
+    scale = max(abs(rate), LAPLACE_UNIT_RATE)             # the integral is computed in u = scale t
+    horizon = LAPLACE_HORIZON / abs(rate) if rate != 0 else math.inf     # the time T; none for s = 0
+    diverges = (f"the integral of e^(-st) f(t) from 0 to infinity does not converge for s = {rate:g}, or "
+                "too slowly to be computed: s is not inside the range of the transform (or is too near "
+                "to its edge), or f(t) has no transform")
+
+    def value_at(t: float) -> float:
+        """f(t) as a finite float, or a ValueError with the sentence for what went wrong."""
+        try:
+            raw = f(t)
+        except ArithmeticError as problem:                # a division by 0, an overflow
+            raise ValueError(f"{diverges} (f(t) cannot be computed at t = {t:.3g}: {problem})") from None
+        except TypeError as problem:
+            hint = " (a power is written t ** 2, not t ^ 2)" if "^" in str(problem) else ""
+            raise ValueError(f"f must take one number and return one number ({problem}){hint}") from None
+        except ValueError as problem:                     # math.log of a negative number, for example
+            raise ValueError(f"{diverges} (f(t) is not defined at t = {t:.3g}: {problem})") from None
+        except Exception as problem:                      # whatever else f does: said in one sentence
+            raise ValueError(f"f stopped with an error at t = {t:.3g} "
+                             f"({type(problem).__name__}: {problem})") from None
+        try:
+            refused = isinstance(raw, (str, bytes)) or np.iscomplexobj(raw)
+            value = math.nan if refused else float(raw)
+        except (TypeError, ValueError):
+            refused = True
+        if refused:
+            raise ValueError(f"f must return one real number, got {raw!r} at t = {t:.3g}")
+        if math.isnan(value):
+            raise ValueError(f"{diverges} (f(t) is not a number at t = {t:.3g})")
+        if math.isinf(value):
+            raise ValueError(f"{diverges} (f(t) is too large for the computer at t = {t:.3g})")
+        return value
+
+    def integrand(u: float) -> float:
+        t = u / scale
+        return math.exp(-rate * t) * value_at(t)
+
+    end = scale * horizon                                 # in u; infinite for s = 0
+    last = min(end, LAPLACE_EDGES[1])
+
+    def seen_jumps() -> set[float]:
+        """The places (in u) where a scan of f sees a jump: cuts that the caller did not name."""
+        found: set[float] = set()
+        left = LAPLACE_EDGES[0]
+        while left < last:
+            right = min(left * LAPLACE_EDGE_RATIO, last)
+            points = [left + (right - left) * index / LAPLACE_SCAN for index in range(LAPLACE_SCAN + 1)]
+            values = [value_at(point / scale) for point in points]
+            changes = [abs(after - before) for before, after in zip(values[:-1], values[1:], strict=True)]
+            floor = rtol * max(abs(value) for value in values)
+            beside = [min(changes[max(index - 1, 0):index] + changes[index + 1:index + 2])
+                      for index in range(len(changes))]   # the smaller change of the neighboring steps
+            marked = [index for index, change in enumerate(changes)
+                      if change > LAPLACE_JUMP_RATIO * beside[index] and change > floor]
+            if len(marked) <= LAPLACE_MAX_JUMPS:
+                for index in marked:                      # halve the step until the jump is located
+                    low, high = points[index], points[index + 1]
+                    below, above = values[index], values[index + 1]
+                    middle = (low + high) / 2
+                    while low < middle < high:
+                        between = value_at(middle / scale)
+                        if abs(between - below) <= abs(between - above):
+                            low, below = middle, between
+                        else:
+                            high, above = middle, between
+                        middle = (low + high) / 2
+                    found.add(high)                       # low and high are now neighboring numbers
+            left = right
+        return found
+
+    def by_pieces(shift: float, cuts: set[float]) -> tuple[float, float]:
+        """The sum of the integrals over the pieces and of the errors that quad estimates."""
+        edges = {0.0, last} | cuts
+        edge = LAPLACE_EDGES[0] * shift
+        while edge < last:
+            edges.add(edge)
+            edge *= LAPLACE_EDGE_RATIO
+        edges.update(scale * point for point in jumps if 0.0 < scale * point < last)
+        ordered = sorted(edges)
+        pieces = list(zip(ordered[:-1], ordered[1:], strict=True))
+        if last < end:
+            pieces.append((last, end))                    # s = 0, or a very small s: the rest at once
+        share = rtol / len(pieces)
+        total = error = 0.0
+        for left, right in pieces:
+            part, estimate, _, *doubt = quad(integrand, left, right, epsabs=share, epsrel=share,
+                                             limit=QUAD_LIMIT, full_output=True)
+            if doubt:                                     # quad adds a message when it is in doubt
+                raise ValueError(diverges)
+            total += part
+            error += estimate
+        return total, error
+
+    with np.errstate(all="ignore"):
+        cuts = seen_jumps()
+        (value, estimate), (other, other_estimate) = (by_pieces(shift, cuts) for shift in LAPLACE_SHIFTS)
+        tail, growing = 0.0, False
+        if rate != 0:
+            tail = scale * horizon * abs(integrand(end))
+            sizes = [abs(value_at(part * horizon)) for part in LAPLACE_GROWTH_TIMES]
+            if all(size > 0 for size in sizes):           # the slopes of log |f| between these times
+                step = (LAPLACE_GROWTH_TIMES[-1] - LAPLACE_GROWTH_TIMES[-2]) * horizon
+                before = (math.log(sizes[1]) - math.log(sizes[0])) / (
+                    (LAPLACE_GROWTH_TIMES[1] - LAPLACE_GROWTH_TIMES[0]) * horizon)
+                after = (math.log(sizes[2]) - math.log(sizes[1])) / step
+                growing = after > rate and after - before > rtol * abs(after)
+    error = max(estimate, other_estimate, abs(value - other))
+    allowed = max(rtol, rtol * abs(value))                # value = scale F(s): rtol max(1, scale |F(s)|)
+    if growing or not (math.isfinite(value) and error <= allowed and tail <= allowed):
+        raise ValueError(diverges)
+    return float(value / scale)
+
+
+class LaplaceRow(NamedTuple):
+    """One row of the table of Laplace transforms (see ``laplace_table``)."""
+
+    name: str                               # a short name for the row: one of LAPLACE_ROW_NAMES
+    time: Callable[[ArrayLike], np.ndarray | float]         # f(t) for t >= 0: a number, a list or an array
+    transform: Callable[[ArrayLike], np.ndarray | float]    # F(s); a ValueError for s at or below s_min
+    s_min: float                            # the transform holds for s > s_min
+    time_text: str                          # f(t) with Lebl's letters, in plain ASCII: "e^(-a t)"
+    transform_text: str                     # F(s) the same way: "1/(s + a)"
+
+
+def _laplace_row(name: str, time: Callable[[np.ndarray], np.ndarray],
+                 transform: Callable[[np.ndarray], np.ndarray], s_min: float, time_text: str,
+                 transform_text: str) -> LaplaceRow:
+    """A row whose two functions take numbers, lists or arrays, in float arithmetic, and refuse s <= s_min."""
+    def result(values: np.ndarray, points: np.ndarray) -> np.ndarray | float:
+        return float(values) if points.ndim == 0 else values
+
+    def of_time(t: ArrayLike) -> np.ndarray | float:
+        points = np.asarray(t, dtype=float)
+        return result(time(points), points)
+
+    def of_s(s: ArrayLike) -> np.ndarray | float:
+        try:
+            refused = isinstance(s, (bool, np.bool_, str, bytes)) or np.iscomplexobj(s)
+            points = None if refused else np.asarray(s, dtype=float)
+        except (TypeError, ValueError):
+            refused = True
+        if refused:
+            raise ValueError(f"s must be a real number, a list or an array of real numbers, got {s!r}")
+        if not np.all(points > s_min):
+            raise ValueError(f"the transform {transform_text} of {time_text} holds only for s > {s_min:g} "
+                             f"(the row {name!r} of the table), got s = {s!r}")
+        with np.errstate(over="ignore", divide="ignore"):
+            values = transform(points)
+        if not np.all(np.isfinite(values)):
+            raise ValueError(f"the transform {transform_text} is too large for the computer at s = {s!r}")
+        return result(values, points)
+
+    return LaplaceRow(name, of_time, of_s, s_min, time_text, transform_text)
+
+
+def laplace_table(*, a: float = LAPLACE_DEMO_A, omega: float = LAPLACE_DEMO_OMEGA,
+                  n: int = LAPLACE_DEMO_N) -> tuple[LaplaceRow, ...]:
+    """Lebl's Table 6.1.1 of Laplace transforms as data, for given constants a, omega and n.
+
+    Lebl, Section 6.1.1 (Table 6.1.1; Examples 6.1.1 to 6.1.3 compute the rows 1, e^(-at) and t), used
+    in notebook 19 and in its tests. Nine rows, in the order of the book, with the names of
+    LAPLACE_ROW_NAMES ("1", "t", "t^2", "t^n", "e^(-at)", "sin", "cos", "sinh", "cosh"):
+
+        f(t)             F(s)                       holds for
+        1                1/s                        s > 0
+        t                1/s^2                      s > 0
+        t^2              2/s^3                      s > 0
+        t^n              n!/s^(n + 1)               s > 0
+        e^(-a t)         1/(s + a)                  s > -a
+        sin(omega t)     omega/(s^2 + omega^2)      s > 0
+        cos(omega t)     s/(s^2 + omega^2)          s > 0
+        sinh(omega t)    omega/(s^2 - omega^2)      s > omega
+        cosh(omega t)    s/(s^2 - omega^2)          s > omega
+
+    The book's first row is a constant C with C/s: by linearity it is C times the row 1. Its row t^3
+    is t^n with n = 3 (the default), and its row for the Heaviside function u(t - a) is left to
+    notebook 20. The table is printed as Lebl prints it, e^(-a t) with 1/(s + a); many books print
+    e^(a t) with 1/(s - a), which is this row with -a in place of a. Each row holds f(t) and F(s) as
+    functions of a number, a list or a NumPy array (computed in float arithmetic: a float for a
+    number, an array otherwise), the number s_min, and the two formulas as text with the letters a,
+    omega, n. F(s) raises a ValueError for an s at or below s_min, where the formula is not the
+    transform. To take a row by its name: ``rows = {row.name: row for row in ol.laplace_table()}``,
+    then ``rows["sin"]``. The constants are given by name, as ``ol.laplace_table(a=-3)``.
+    Conventions: t >= 0 and s real; with t in seconds, a, omega and s are in 1/s. ValueError: a that
+    is not one finite real number (None, text, a list, a complex number); omega the same, or not
+    positive (sinh and cosh need s > omega > 0); n not a whole number, 0 or more (3.0 is refused), or
+    so large that n! is not a number of the computer.
+    """
+    import math
+
+    a = _one_real_number("a", a)
+    omega = _one_real_number("omega", omega)
+    if omega <= 0:
+        raise ValueError(f"omega must be a positive number, got {omega!r}")
+    if isinstance(n, bool) or not isinstance(n, (int, np.integer)) or n < 0:
+        raise ValueError(f"n must be a whole number such as 3 (not 3.0), 0 or more, got {n!r}")
+    n = int(n)                                            # a plain Python integer: no overflow in n + 1
+    try:
+        factorial = float(math.factorial(n))
+    except OverflowError:
+        raise ValueError(f"n = {n} is too large: n! is not a number of the computer") from None
+    return (
+        _laplace_row("1", np.ones_like, lambda s: 1.0 / s, 0.0, "1", "1/s"),
+        _laplace_row("t", lambda t: t, lambda s: 1.0 / s ** 2, 0.0, "t", "1/s^2"),
+        _laplace_row("t^2", lambda t: t ** 2, lambda s: 2.0 / s ** 3, 0.0, "t^2", "2/s^3"),
+        _laplace_row("t^n", lambda t: t ** n, lambda s: factorial / s ** (n + 1), 0.0,
+                     "t^n", "n!/s^(n + 1)"),
+        _laplace_row("e^(-at)", lambda t: np.exp(-a * t), lambda s: 1.0 / (s + a), 0.0 - a,
+                     "e^(-a t)", "1/(s + a)"),
+        _laplace_row("sin", lambda t: np.sin(omega * t), lambda s: omega / (s ** 2 + omega ** 2), 0.0,
+                     "sin(omega t)", "omega/(s^2 + omega^2)"),
+        _laplace_row("cos", lambda t: np.cos(omega * t), lambda s: s / (s ** 2 + omega ** 2), 0.0,
+                     "cos(omega t)", "s/(s^2 + omega^2)"),
+        _laplace_row("sinh", lambda t: np.sinh(omega * t), lambda s: omega / (s ** 2 - omega ** 2), omega,
+                     "sinh(omega t)", "omega/(s^2 - omega^2)"),
+        _laplace_row("cosh", lambda t: np.cosh(omega * t), lambda s: s / (s ** 2 - omega ** 2), omega,
+                     "cosh(omega t)", "s/(s^2 - omega^2)"),
+    )
 
 
 # ---------------------------------------------------------------------------

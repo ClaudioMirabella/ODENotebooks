@@ -5,9 +5,9 @@ solution (verified with SymPy), reproduction of reference examples (with `assert
 solutions, sliders (ipywidgets), interpretation, exercises.
 
 * `odelib.py`: tested helper functions (analytic solutions, Euler/Heun/RK4, slope fields, phase lines,
-  characteristic roots, free response of the mass-spring-damper, Wronskians; `solution_curve` for curves on a slope field; Torricelli's law; the integrating factor with numerical integrals; relaxation to an equilibrium and quadratic drag; forced vibrations; equations of order n and boundary value problems; linear systems x' = A x (`companion_matrix`, `two_by_two_case`, `eigen_solution`, notebook 17); the phase plane and nonlinear systems (`classify_linear_2d`, `jacobian`, `classify_equilibrium_2d`, `trajectories`, `direction_field`, `phase_portrait`, notebook 18); `check`, `check_formula`, `check_solution`, `check_vector` and `check_choice` (words such as "saddle") for the
+  characteristic roots, free response of the mass-spring-damper, Wronskians; `solution_curve` for curves on a slope field; Torricelli's law; the integrating factor with numerical integrals; relaxation to an equilibrium and quadratic drag; forced vibrations; equations of order n and boundary value problems; linear systems x' = A x (`companion_matrix`, `two_by_two_case`, `eigen_solution`, notebook 17); the phase plane and nonlinear systems (`classify_linear_2d`, `jacobian`, `classify_equilibrium_2d`, `trajectories`, `direction_field`, `phase_portrait`, notebook 18); the Laplace transform (`laplace_numeric`, the integral that defines it, and `laplace_table`, the table of the course text as data, notebook 19); `check`, `check_formula`, `check_solution`, `check_vector` and `check_choice` (words such as "saddle") for the
   exercises "by hand, then check"). The list of every public name is at the top of `odelib.py`.
-* `tests/`: `python -m pytest` (from this folder, about four minutes) checks `odelib` against the
+* `tests/`: `python -m pytest` (from this folder, about five minutes) checks `odelib` against the
   values printed in the books (`test_odelib.py`), against SymPy's own solutions and an
   independent numerical integration (`test_cross_validation.py`), and runs every numbered
   notebook untouched, with right answers and with wrong answers (`test_notebooks_run.py`).

@@ -1682,3 +1682,440 @@ def test_review_of_notebook_18_library_points():
     for window in (((0, 1),), (("a", "b"), (0, 1)), ((0, np.inf), (0, 1))):
         with pytest.raises(ValueError, match="window"):
             ol.trajectories(example_811, (0.5, 0.0), (0.0, 1.0), 10, window)
+
+
+# --- the Laplace transform (notebook 19; Lebl, Sections 6.1 and 6.2) ---------------------------------
+import math  # noqa: E402  (used by the tests of this block only)
+
+LAPLACE_S = (0.5, 1.0, 3.0, 10.0)           # values of s > 0, in 1/s when t is in seconds
+LAPLACE_OFFSETS = (0.5, 1.0, 4.0)           # each row of the table is checked at s = s_min + offset
+LAPLACE_SEED = 331                          # as SEED in test_cross_validation.py
+LAPLACE_DRAWS = 20                          # seeded random sets of constants (a, omega, n, s)
+LAPLACE_A_RANGE = (-2.0, 2.0)               # the constants a drawn
+LAPLACE_OMEGA_RANGE = (0.2, 3.0)            # the constants omega drawn
+LAPLACE_N_RANGE = (0, 8)                    # the powers n drawn: 0, ..., 7
+LAPLACE_EDGE_MARGIN = (0.3, 5.0)            # s is drawn this far above the edge of the range of a row
+LAPLACE_SCAN = 300                          # seeded sines and cosines (40 000 were run once by hand)
+LAPLACE_SCAN_OMEGA = (0.2, 5.0)             # their omega
+LAPLACE_SCAN_DECADES = (-1.0, 2.0)          # their s, from 10^-1 to 10^2
+S_DEMO = 3.0                                # the s of the first values printed by notebook 19
+LOOSE_RTOL = 1e-4                           # a looser rtol than the default
+ROW_AGREEMENT = 1e-12                       # two ways of computing one formula of the table (relative)
+# functions of t >= 0 with the transforms printed in the book (or found from its table), as (f, F)
+BOOK_TRANSFORMS = {
+    "Exercise 6.1.12": (lambda t: 4 * (t + 1) ** 2, lambda s: 8 / s ** 3 + 8 / s ** 2 + 4 / s),
+    "Exercise 6.1.13": (lambda t: 2 * t ** 2 - 2 * t + 1 - np.exp(-2 * t), lambda s: 8 / (s ** 3 * (s + 2))),
+    "Exercise 6.1.14": (lambda t: t * np.exp(-t), lambda s: 1 / (s + 1) ** 2),
+    "Exercise 6.1.15": (lambda t: np.sin(t) * np.exp(-t), lambda s: 1 / (s ** 2 + 2 * s + 2)),
+    "Example 6.1.6": (lambda t: 1 + np.sin(t), lambda s: (s ** 2 + s + 1) / (s ** 3 + s)),
+    "Example 6.1.7": (lambda t: np.exp(-2 * t) * np.sin(2 * t) / 2, lambda s: 1 / (s ** 2 + 4 * s + 8)),
+    "Example 6.2.1": (lambda t: np.cos(t) / 3 - np.cos(2 * t) / 3 + np.sin(t),
+                      lambda s: s / ((s ** 2 + 1) * (s ** 2 + 4)) + 1 / (s ** 2 + 1)),
+    "Example 6.2.4": (lambda t: 1 - np.cos(t), lambda s: 1 / (s * (s ** 2 + 1))),
+    # the circuit of notebook 19: q'' + 2 q' + 5 q = 8 e^(-t), q(0) = 1, q'(0) = 0
+    "notebook 19, circuit": (lambda t: np.exp(-t) * (2 - np.cos(2 * t) + np.sin(2 * t) / 2),
+                             lambda s: (8 / (s + 1) + s + 2) / (s ** 2 + 2 * s + 5)),
+    # the same circuit with R = 6 ohm, where the root -1 of the source is a root of the circuit
+    "notebook 19, R = 6": (lambda t: (3 / 4 + 2 * t) * np.exp(-t) + np.exp(-5 * t) / 4,
+                           lambda s: (8 / (s + 1) + s + 6) / (s ** 2 + 6 * s + 5)),
+}
+
+
+def promised(found, exact, s, rtol=ol.LAPLACE_RTOL):
+    """True when found is as near to exact as laplace_numeric promises: rtol max(1 / max(|s|, 1), |F(s)|)."""
+    return abs(found - exact) <= rtol * max(1 / max(abs(s), ol.LAPLACE_UNIT_RATE), abs(exact))
+
+
+def test_laplace_numeric_lebl_examples_6_1_1_to_6_1_3():
+    for s in LAPLACE_S:
+        assert promised(ol.laplace_numeric(lambda t: 1.0, s), 1 / s, s)                 # Example 6.1.1
+        assert promised(ol.laplace_numeric(lambda t: t, s), 1 / s ** 2, s)              # Example 6.1.3
+        for a in (2.0, 0.25, -0.25):                                                    # Example 6.1.2
+            assert promised(ol.laplace_numeric(lambda t, a=a: np.exp(-a * t), s), 1 / (s + a), s)
+    assert isinstance(ol.laplace_numeric(lambda t: 1.0, S_DEMO), float)
+    # the three values printed first in notebook 19: 1/s, 1/s^2 and 1/(s + 2) at s = 3
+    assert ol.laplace_numeric(lambda t: 1.0, S_DEMO) == pytest.approx(1 / 3)
+    assert ol.laplace_numeric(lambda t: t, S_DEMO) == pytest.approx(1 / 9)
+    assert ol.laplace_numeric(lambda t: np.exp(-2 * t), S_DEMO) == pytest.approx(1 / 5)
+
+
+def test_laplace_table_is_lebl_table_6_1_1():
+    table = ol.laplace_table()                              # a = 2, omega = 3, n = 3
+    assert (ol.LAPLACE_DEMO_A, ol.LAPLACE_DEMO_OMEGA, ol.LAPLACE_DEMO_N) == (2.0, 3.0, 3)
+    assert tuple(row.name for row in table) == ol.LAPLACE_ROW_NAMES
+    assert ol.LAPLACE_ROW_NAMES == ("1", "t", "t^2", "t^n", "e^(-at)", "sin", "cos", "sinh", "cosh")
+    # Table 6.1.1 at s = 5: 1/s, 1/s^2, 2/s^3, 6/s^4, 1/(s + a), omega/(s^2 + omega^2), s/(s^2 + omega^2),
+    # omega/(s^2 - omega^2), s/(s^2 - omega^2)
+    book = [1 / 5, 1 / 25, 2 / 125, 6 / 625, 1 / 7, 3 / 34, 5 / 34, 3 / 16, 5 / 16]
+    assert [row.transform(5.0) for row in table] == pytest.approx(book)
+    assert [row.s_min for row in table] == [0, 0, 0, 0, -2, 0, 0, 3, 3]
+    # f(t) at t = 0.5: 1, t, t^2, t^3, e^(-2t), sin 3t, cos 3t, sinh 3t, cosh 3t
+    values = [1, 0.5, 0.25, 0.125, np.exp(-1), np.sin(1.5), np.cos(1.5), np.sinh(1.5), np.cosh(1.5)]
+    assert [row.time(0.5) for row in table] == pytest.approx(values)
+    assert [row.time_text for row in table] == ["1", "t", "t^2", "t^n", "e^(-a t)", "sin(omega t)",
+                                                "cos(omega t)", "sinh(omega t)", "cosh(omega t)"]
+    assert [row.transform_text for row in table] == [
+        "1/s", "1/s^2", "2/s^3", "n!/s^(n + 1)", "1/(s + a)", "omega/(s^2 + omega^2)", "s/(s^2 + omega^2)",
+        "omega/(s^2 - omega^2)", "s/(s^2 - omega^2)"]
+    for row in table:
+        assert isinstance(row, ol.LaplaceRow) and isinstance(row.s_min, float)
+        assert (row.name + row.time_text + row.transform_text).isascii()
+
+
+def test_laplace_table_rows_take_numbers_lists_and_arrays_in_float_arithmetic():
+    times = np.linspace(0.0, 2.0, 5)
+    for row in ol.laplace_table():
+        assert isinstance(row.time(1), float) and isinstance(row.transform(row.s_min + 1), float)
+        assert isinstance(row.time(np.float64(1.0)), float)                 # a NumPy number in, a float out
+        assert np.shape(row.time(times)) == times.shape
+        assert np.shape(row.transform(row.s_min + 1.0 + times)) == times.shape
+        assert row.time([1, 2]) == pytest.approx([row.time(1.0), row.time(2.0)])          # a list of integers
+        assert np.isfinite(row.time(0.0))
+    rows = {row.name: row for row in ol.laplace_table()}                    # the idiom of the docstring
+    assert rows["1"].time(np.inf) == 1.0
+    # integers do not overflow (code review of notebook 19, B3)
+    assert ol.laplace_table(n=20)[3].time(np.arange(10))[-1] == pytest.approx(9.0 ** 20)
+    assert ol.laplace_table(n=9)[3].transform(np.int32(100)) == pytest.approx(math.factorial(9) / 100.0 ** 10)
+    assert rows["t^2"].transform(np.int32(2000)) == pytest.approx(2 / 2000.0 ** 3)
+    huge = ol.laplace_table(n=np.int8(127))[3].transform(2.0)
+    assert huge == pytest.approx(math.factorial(127) / 2.0 ** 128)
+    assert ol.laplace_table(n=70)[3].time(np.int64(10)) == pytest.approx(1e70)
+    assert format(ol.laplace_table(a=0)[4].s_min, "g") == "0"                # not "-0"
+
+
+@pytest.mark.parametrize("name", ol.LAPLACE_ROW_NAMES)
+def test_laplace_table_rows_agree_with_the_defining_integral(name):
+    (row,) = [row for row in ol.laplace_table() if row.name == name]
+    for offset in LAPLACE_OFFSETS:
+        s = row.s_min + offset                              # e^(-2t): also s = -1.5 and s = -1
+        assert promised(ol.laplace_numeric(row.time, s), row.transform(s), s)
+
+
+def test_laplace_table_with_other_constants():
+    # many books print e^(at) with 1/(s - a): the row of the book with -a in place of a
+    rows = {row.name: row for row in ol.laplace_table(a=-3.0, omega=0.5, n=0)}
+    assert rows["e^(-at)"].s_min == 3.0 and rows["e^(-at)"].transform(4.0) == pytest.approx(1.0)
+    assert rows["e^(-at)"].time(1.0) == pytest.approx(np.exp(3.0))
+    assert rows["t^n"].time(7.0) == 1.0 and rows["t^n"].transform(4.0) == pytest.approx(0.25)     # t^0 = 1
+    assert rows["cosh"].s_min == 0.5
+    assert ol.laplace_table(n=np.int64(5))[3].transform(1.0) == pytest.approx(120.0)             # 5! = 120
+    with pytest.raises(TypeError):
+        ol.laplace_table(-3.0)                              # the constants are given by name
+
+
+def test_laplace_table_transform_refuses_s_at_or_below_the_edge_of_its_range():
+    rows = {row.name: row for row in ol.laplace_table()}
+    for name, s in (("1", 0.0), ("1", np.float64(0.0)), ("1", -1.0), ("sinh", 1.0), ("cosh", 3.0),
+                    ("e^(-at)", -2.0), ("t", np.linspace(0.0, 5.0, 3)), ("t", np.nan)):
+        with pytest.raises(ValueError, match="holds only for s > "):
+            rows[name].transform(s)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")                      # no overflow warning: a sentence
+        with pytest.raises(ValueError, match="too large for the computer"):
+            ol.laplace_table(n=170)[3].transform(0.5)       # 170! / 0.5^171
+        with pytest.raises(ValueError, match="too large for the computer"):
+            rows["t^2"].transform(1e-200)                   # s^3 is 0 for the computer: no RuntimeWarning
+    for s in (2 + 0j, np.complex128(2), "2", True, np.True_, [1.0, "a"]):
+        with pytest.raises(ValueError, match="s must be a real number, a list or an array of real numbers"):
+            rows["1"].transform(s)
+
+
+def test_laplace_table_rows_agree_with_the_integral_for_seeded_random_constants():
+    rng = np.random.default_rng(LAPLACE_SEED)
+    for _ in range(LAPLACE_DRAWS):
+        a, omega = rng.uniform(*LAPLACE_A_RANGE), rng.uniform(*LAPLACE_OMEGA_RANGE)
+        n, margin = int(rng.integers(*LAPLACE_N_RANGE)), rng.uniform(*LAPLACE_EDGE_MARGIN)
+        for row in ol.laplace_table(a=a, omega=omega, n=n):
+            s = row.s_min + margin
+            assert promised(ol.laplace_numeric(row.time, s), row.transform(s), s), (row.name, a, omega, n, s)
+
+
+def test_laplace_numeric_keeps_its_promise_on_a_seeded_scan_of_sines_and_cosines():
+    # the scan of the code review (B2): 40 000 cases were run once by hand, none beyond the promise
+    rng = np.random.default_rng(LAPLACE_SEED)
+    for _ in range(LAPLACE_SCAN):
+        omega, s = rng.uniform(*LAPLACE_SCAN_OMEGA), 10 ** rng.uniform(*LAPLACE_SCAN_DECADES)
+        size = s * s + omega * omega
+        assert promised(ol.laplace_numeric(lambda t, omega=omega: math.sin(omega * t), s), omega / size, s)
+        assert promised(ol.laplace_numeric(lambda t, omega=omega: math.cos(omega * t), s), s / size, s)
+    s = 14.138                                              # where one integral alone was wrong by 6e-8
+    assert promised(ol.laplace_numeric(lambda t: math.sin(3 * t), s), 3 / (s * s + 9), s)
+
+
+@pytest.mark.parametrize("name", sorted(BOOK_TRANSFORMS))
+def test_laplace_numeric_gives_the_transforms_of_the_book(name):
+    f, transform = BOOK_TRANSFORMS[name]
+    for s in LAPLACE_S:
+        assert promised(ol.laplace_numeric(f, s), transform(s), s)
+
+
+def test_laplace_numeric_linearity_and_the_product_warning():
+    def f(t):
+        return np.exp(-t)
+
+    def g(t):
+        return np.cos(2 * t)
+
+    s = 2.0
+    F, G = ol.laplace_numeric(f, s), ol.laplace_numeric(g, s)
+    # Theorem 6.1.1: L{A f + B g} = A L{f} + B L{g}
+    assert ol.laplace_numeric(lambda t: 3 * f(t) - 5 * g(t), s) == pytest.approx(3 * F - 5 * G)
+    # Lebl's warning: the transform of a product is not the product of the transforms (notebook 19)
+    product = ol.laplace_numeric(lambda t: t * t, s)
+    assert product == pytest.approx(1 / 4)
+    assert ol.laplace_numeric(lambda t: t, s) ** 2 == pytest.approx(1 / 16)
+    # a transform that is 0 is found too (the accuracy is absolute): L{1 - 2t} at s = 2
+    assert promised(ol.laplace_numeric(lambda t: 1 - 2 * t, s), 0.0, s)
+
+
+def test_laplace_numeric_the_rules_of_lebl_section_6_2():
+    for s in LAPLACE_S:
+        # Table 6.2.1 on g = 1 + sin 2t: L{g'} = s G - g(0), L{g''} = s^2 G - s g(0) - g'(0)
+        G = ol.laplace_numeric(lambda t: 1 + np.sin(2 * t), s)
+        assert promised(ol.laplace_numeric(lambda t: 2 * np.cos(2 * t), s), s * G - 1, s)
+        assert ol.laplace_numeric(lambda t: -4 * np.sin(2 * t), s) == pytest.approx(s ** 2 * G - s * 1 - 2)
+        # Exercise 6.2.7 on f = sin t: L{-t f(t)} = F'(s), with F = 1/(s^2 + 1), F' = -2 s/(s^2 + 1)^2
+        assert promised(ol.laplace_numeric(lambda t: -t * np.sin(t), s), -2 * s / (s ** 2 + 1) ** 2, s)
+        # the first shifting property (Section 6.1.4): L{e^(-at) f(t)} = F(s + a), on f = cos 3t, a = 2
+        assert promised(ol.laplace_numeric(lambda t: np.exp(-2 * t) * np.cos(3 * t), s),
+                        (s + 2) / ((s + 2) ** 2 + 9), s)
+
+
+def test_laplace_numeric_the_range_of_s():
+    def growing(t):
+        return np.exp(2 * t)                                # L{e^(2t)} = 1/(s - 2) for s > 2
+
+    assert ol.laplace_numeric(growing, 3) == pytest.approx(1.0)
+    assert ol.laplace_numeric(growing, 2.1) == pytest.approx(10.0)          # 5% above the edge
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")                      # no overflow warning reaches the student
+        for s in (1, 2, 2.01, 2.05, 0, -1):                 # below the edge, on it, too near to it
+            with pytest.raises(ValueError, match="does not converge for s = "):
+                ol.laplace_numeric(growing, s)
+    # a decaying function has a transform at s = 0 and for some s < 0: L{e^(-2t)} = 1/(s + 2), s > -2
+    for s in (0, -1, -1.5, -1.9):
+        assert ol.laplace_numeric(lambda t: np.exp(-2 * t), s) == pytest.approx(1 / (s + 2))
+    for s in (-1.99, -2, -3):
+        with pytest.raises(ValueError, match="does not converge"):
+            ol.laplace_numeric(lambda t: np.exp(-2 * t), s)
+    with pytest.raises(ValueError, match="does not converge for s = 0,"):
+        ol.laplace_numeric(lambda t: 1.0, -0.0)             # L{1} needs s > 0; -0.0 is written 0
+    # the documented thresholds near the edge 0: 1 and t^3 at s = 1e-4, sin t at s = 1/100
+    assert ol.laplace_numeric(lambda t: 1.0, 1e-4) == pytest.approx(1e4)
+    assert ol.laplace_numeric(lambda t: t ** 3, 1e-4) == pytest.approx(6e16)
+    assert promised(ol.laplace_numeric(math.sin, 0.01), 1 / (1 + 0.01 ** 2), 0.01)
+    with pytest.raises(ValueError, match="does not converge"):
+        ol.laplace_numeric(math.sin, 1 / 300)               # below about omega / 200: refused
+    # at s = 0 only functions that die out like an exponential are computed (documented)
+    with pytest.raises(ValueError, match="does not converge"):
+        ol.laplace_numeric(lambda t: 1 / (1 + t) ** 2, 0)
+
+
+def two_to_the_t_squared(t):
+    return 2.0 ** (t * t)                                   # raises OverflowError where np.exp gives inf
+
+
+@pytest.mark.parametrize("name, f, s", [
+    ("e^(t^2)", lambda t: np.exp(t * t), 3.0),              # Lebl: no transform
+    ("e^(t^2), a larger s", lambda t: np.exp(t * t), 30.0),         # refused by the growth of |f| before T
+    ("2^(t^2)", two_to_the_t_squared, 3.0),                 # an OverflowError inside f
+    ("1/t", lambda t: 1 / t, 1.0),                          # Lebl: the integral diverges for all s
+    ("1/t, a large s", lambda t: 1 / t, 1000.0),
+    ("tan t", lambda t: np.tan(t), 1.0),                    # Lebl: no transform
+    ("tan t, s = 10", lambda t: np.tan(t), 10.0),
+    ("1/(t - 1)", lambda t: 1 / (t - 1), 3.0),
+    ("NaN", lambda t: np.nan, 1.0),
+    ("ln(t - 1) with np.log", lambda t: np.log(t - 1), 1.0),        # not defined for t < 1: NaN
+    ("ln(t - 1) with math.log", lambda t: math.log(t - 1), 1.0),    # a ValueError inside f
+    ("1/(t - t)", lambda t: 1 / (t - t), 1.0),              # a ZeroDivisionError inside f
+])
+def test_laplace_numeric_refuses_functions_without_a_transform(name, f, s):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(ValueError, match="does not converge"):
+            ol.laplace_numeric(f, s)
+
+
+def test_laplace_numeric_documented_limits_a_number_where_no_transform_exists():
+    # a numerical integral cannot prove convergence: these wrong numbers are documented in the
+    # docstring ("what is promised, and what is not"); the test tells if the limits move
+    assert ol.laplace_numeric(lambda t: np.exp(t * t), 40.0) == pytest.approx(1 / 40, rel=0.02)
+    assert ol.laplace_numeric(lambda t: np.tan(t), 20.0) == pytest.approx(1 / 20 ** 2, rel=0.02)
+    assert ol.laplace_numeric(lambda t: float(t) ** t, 10.0) == pytest.approx(0.0833, rel=0.01)
+    # the other side of the same limits: refused for a smaller s (1 / (t - 1) at s = 3 is in the list above),
+    # and 1 / (t - 1) also at s = 30, where the first look at f falls on t = 1 itself
+    for f, s in ((lambda t: float(t) ** t, 4.0), (lambda t: np.exp(t * t), 30.0),
+                 (lambda t: np.tan(t), 10.0), (lambda t: 1 / (t - 1), 30.0)):
+        with pytest.raises(ValueError, match="does not converge"):
+            ol.laplace_numeric(f, s)
+
+
+def test_laplace_numeric_steps_and_pulses_with_and_without_breaks():
+    def pulse(t):
+        return 1.0 if 5 <= t < 6 else 0.0                   # code review of notebook 19, B1
+
+    def late_step(t):
+        return 1.0 if t >= 300 else 0.0
+
+    def narrow(t):
+        return 100.0 if 5 <= t <= 5.01 else 0.0             # 0.01 wide: found without breaks since the scan
+
+    def hair(t):
+        return 100.0 if HAIR_START <= t < HAIR_START + HAIR_WIDTH else 0.0   # between two looks at f: missed
+
+    for s in (1.0, 0.5):
+        exact = (math.exp(-5 * s) - math.exp(-6 * s)) / s
+        assert promised(ol.laplace_numeric(pulse, s), exact, s)
+        assert promised(ol.laplace_numeric(pulse, s, breaks=(5, 6)), exact, s)
+    exact = math.exp(-300 * 0.01) / 0.01
+    assert promised(ol.laplace_numeric(late_step, 0.01), exact, 0.01)
+    assert promised(ol.laplace_numeric(late_step, 0.01, breaks=[300]), exact, 0.01)
+    assert promised(ol.laplace_numeric(lambda t: 1.0 if t >= 5 else 0.0, 3.0), math.exp(-15) / 3, 3.0)
+    exact = 100 * (math.exp(-5 * 0.5) - math.exp(-5.01 * 0.5)) / 0.5
+    assert promised(ol.laplace_numeric(narrow, 0.5, breaks=(5, 5.01)), exact, 0.5)
+    assert promised(ol.laplace_numeric(narrow, 0.5), exact, 0.5)
+    exact = 100 * (math.exp(-HAIR_START * 0.5) - math.exp(-(HAIR_START + HAIR_WIDTH) * 0.5)) / 0.5
+    assert promised(ol.laplace_numeric(hair, 0.5, breaks=(HAIR_START, HAIR_START + HAIR_WIDTH)), exact, 0.5)
+    assert ol.laplace_numeric(hair, 0.5) == 0.0             # the documented limit: missed without breaks
+
+
+HAIR_START, HAIR_WIDTH = 5.003, 0.001       # a pulse far narrower than 1/200 of its distance from t = 0
+PULSE_CASES = 60                            # seeded pulses that laplace_numeric must find by itself
+PULSE_WIDTH_SHARE = (0.01, 0.3)             # their width, as a part of their distance from t = 0
+
+
+def test_laplace_numeric_finds_switches_and_pulses_by_itself():
+    # the review of the limits (2026-11-23): without breaks a pulse was refused or, narrower, returned 0
+    rng = np.random.default_rng(SEED)
+    for _ in range(PULSE_CASES):
+        start = 10 ** rng.uniform(-1, 1)
+        width = rng.uniform(*PULSE_WIDTH_SHARE) * start
+        s = 10 ** rng.uniform(-0.5, 0.7)
+        height = rng.uniform(0.5, 5)
+        smooth = float(rng.integers(0, 2))                  # with or without e^(-t) under the pulse
+
+        def f(t, start=start, width=width, height=height, smooth=smooth):
+            return smooth * math.exp(-t) + (height if start <= t < start + width else 0.0)
+
+        exact = height * (math.exp(-start * s) - math.exp(-(start + width) * s)) / s + smooth / (s + 1)
+        assert promised(ol.laplace_numeric(f, s), exact, s)
+    # a sine switched on at pi (Lebl, Section 6.2: u(t - pi) sin t): F(s) = -e^(-pi s) / (s^2 + 1)
+    assert promised(ol.laplace_numeric(lambda t: math.sin(t) if t >= math.pi else 0.0, 1.0),
+                    -math.exp(-math.pi) / 2, 1.0)
+    # the scan must not turn a smooth oscillation into a refusal (1 + sin t at s = 0.5, notebook 19)
+    assert promised(ol.laplace_numeric(lambda t: 1 + math.sin(t), 0.5), 1 / 0.5 + 1 / (0.5 ** 2 + 1), 0.5)
+    # breaks that change nothing: before 0 is refused, beyond the last time T they are not used
+    assert ol.laplace_numeric(lambda t: 1.0, 2.0, breaks=(1.0, 1e9)) == pytest.approx(0.5)
+    for bad in ([-1.0], [np.nan], [np.inf], 3, "ab", [None], "56", [True], [np.True_], ["5"]):
+        with pytest.raises(ValueError, match="breaks must be a list of finite times"):
+            ol.laplace_numeric(lambda t: 1.0, 2.0, breaks=bad)
+
+
+def test_laplace_numeric_sees_a_fast_feature_at_the_start():
+    # mathematics review of notebook 19, finding 3: e^(-at) with a = 1e4 came out as 3e-12
+    for a in (1e4, 1e6, 1e8):
+        assert ol.laplace_numeric(lambda t, a=a: math.exp(-a * t), 1.0) == pytest.approx(1 / (a + 1))
+    assert ol.laplace_numeric(lambda t: 1e6 * math.exp(-1e6 * t), 1.0) == pytest.approx(1e6 / (1e6 + 1))
+    assert ol.laplace_numeric(lambda t: math.exp(-1e4 * t), 0) == pytest.approx(1e-4)
+    # a singular but integrable start
+    assert ol.laplace_numeric(lambda t: 1 / math.sqrt(t), 1.0) == pytest.approx(math.sqrt(math.pi))
+    assert ol.laplace_numeric(math.log, 1.0) == pytest.approx(-np.euler_gamma)
+
+
+@pytest.mark.parametrize("s", [np.nan, np.inf, -np.inf, 1 + 2j, np.complex128(3), "3", None, [1.0, 2.0],
+                               True, np.True_])
+def test_laplace_numeric_refuses_an_s_that_is_not_a_finite_real_number(s):
+    with pytest.raises(ValueError, match="s must be one finite real number"):
+        ol.laplace_numeric(lambda t: 1.0, s)
+
+
+def test_laplace_numeric_refuses_what_is_not_a_function_of_one_real_number():
+    with pytest.raises(ValueError, match="f must be a function"):
+        ol.laplace_numeric(1.0, 3)
+    with pytest.raises(ValueError, match="f must take one number and return one number"):
+        ol.laplace_numeric(lambda t, u: t, 3)
+    with pytest.raises(ValueError, match="a power is written t "):
+        ol.laplace_numeric(lambda t: t ^ 2, 3)              # the hint of the other helpers
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")                      # no ComplexWarning: a sentence
+        for f in (lambda t: "one", lambda t: "1", lambda t: np.exp(1j * t), lambda t: 1 + 2j,
+                  lambda t: [1, 2], lambda t: None):
+            with pytest.raises(ValueError, match="f must return one real number"):
+                ol.laplace_numeric(f, 3)
+    # an error of f's own is said in one sentence that quotes it
+    with pytest.raises(ValueError, match="f stopped with an error at t = .* \\(KeyError"):
+        ol.laplace_numeric(lambda t: {}[t], 3)
+    with pytest.raises(ValueError, match="NameError: name 'omega_typo' is not defined"):
+        ol.laplace_numeric(lambda t: np.sin(omega_typo * t), 3)  # noqa: F821  (the mistake is the test)
+
+
+def test_laplace_numeric_refuses_an_rtol_outside_its_range():
+    for rtol in (0.0, -1e-8, 1e-15, 1.0, 1e3):
+        with pytest.raises(ValueError, match="rtol must be between"):
+            ol.laplace_numeric(lambda t: 1.0, 3, rtol=rtol)
+    for rtol in (np.nan, None, "1e-8"):
+        with pytest.raises(ValueError, match="rtol must be one finite real number"):
+            ol.laplace_numeric(lambda t: 1.0, 3, rtol=rtol)
+    with pytest.raises(TypeError):
+        ol.laplace_numeric(lambda t: 1.0, 3, LOOSE_RTOL)    # rtol is given by name
+
+
+def test_laplace_numeric_uses_only_times_from_zero_on():
+    seen = []
+
+    def recorded(t):
+        seen.append(t)
+        return np.exp(-t)
+
+    for s in (1.0, 0.0, -0.5, 50.0):
+        ol.laplace_numeric(recorded, s, breaks=(0.0, 2.0))
+    assert min(seen) >= 0.0
+
+
+def test_laplace_numeric_a_looser_rtol_costs_no_more_and_keeps_its_own_promise():
+    calls = {}
+    for rtol in (LOOSE_RTOL, ol.LAPLACE_RTOL):
+        count = []
+
+        def counted(t, count=count):
+            count.append(t)
+            return math.sin(3 * t)
+
+        s = 0.2
+        assert promised(ol.laplace_numeric(counted, s, rtol=rtol), 3 / (s * s + 9), s, rtol)
+        calls[rtol] = len(count)
+    assert calls[LOOSE_RTOL] <= calls[ol.LAPLACE_RTOL]
+
+
+def test_laplace_numeric_takes_and_returns_numpy_numbers_as_floats():
+    found = ol.laplace_numeric(lambda t: np.array(1.0), np.float64(S_DEMO))
+    assert isinstance(found, float) and found == pytest.approx(1 / S_DEMO)
+    assert ol.laplace_numeric(lambda t: np.float32(1.0), np.int64(2)) == pytest.approx(0.5)
+
+
+def test_laplace_numeric_leaves_the_warning_filters_and_the_numpy_settings_as_they_were():
+    filters, settings = list(warnings.filters), np.geterr()
+    ol.laplace_numeric(lambda t: 1.0, S_DEMO)
+    with pytest.raises(ValueError):
+        ol.laplace_numeric(lambda t: np.exp(2 * t), 1.0)
+    assert list(warnings.filters) == filters and np.geterr() == settings
+
+
+@pytest.mark.parametrize("arguments, words", [
+    ({"omega": 0.0}, "omega must be a positive number"), ({"omega": -1.0}, "omega must be a positive number"),
+    ({"omega": np.nan}, "omega must be one finite real number"),
+    ({"omega": np.inf}, "omega must be one finite real number"),
+    ({"omega": [1, 2]}, "omega must be one finite real number"),
+    ({"n": -1}, "n must be a whole number"), ({"n": 2.5}, "n must be a whole number"),
+    ({"n": 3.0}, "n must be a whole number"), ({"n": True}, "n must be a whole number"),
+    ({"n": "3"}, "n must be a whole number"), ({"n": None}, "n must be a whole number"),
+    ({"n": 1000}, "is too large"),
+    ({"a": np.nan}, "a must be one finite real number"), ({"a": np.inf}, "a must be one finite real number"),
+    ({"a": None}, "a must be one finite real number"), ({"a": "2"}, "a must be one finite real number"),
+    ({"a": 2 + 0j}, "a must be one finite real number"), ({"a": [2.0]}, "a must be one finite real number"),
+    ({"a": True}, "a must be one finite real number"), ({"a": np.True_}, "a must be one finite real number"),
+    ({"omega": np.True_}, "omega must be one finite real number"),
+])
+def test_laplace_table_refuses_invalid_constants(arguments, words):
+    with pytest.raises(ValueError, match=words):
+        ol.laplace_table(**arguments)

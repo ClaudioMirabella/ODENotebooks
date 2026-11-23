@@ -201,6 +201,7 @@ home page, by week.
 | 16 | [Higher-order equations and boundary value problems](16_Higher_Order_BVP.ipynb) | $y^{(n)} + \dots = 0$; $EIy^{(4)} = w(x)$ | 16 | 2.3, 4.1 |
 | 17 | [Linear systems and the eigenvalue method](17_Linear_Systems.ipynb) | $\vec{x}\,' = A\vec{x}$ | 17-18 | 3.1-3.4, 3.6-3.8 |
 | 18 | [The phase plane and nonlinear systems](18_Phase_Plane.ipynb) | $x' = f(x, y),\ y' = g(x, y)$ | 19-20 | 3.5, 8.1-8.3 |
+| 19 | [The Laplace transform](19_Laplace_Transform.ipynb) | $F(s) = \int_0^\infty e^{-st}f(t)\,dt$ | 23-24 | 6.1, 6.2 |
 
 The **course text** is J. Lebl, *Notes on Diffy Qs: Differential Equations for Engineers*, free
 on LibreTexts; the section numbers above are those of that edition.
