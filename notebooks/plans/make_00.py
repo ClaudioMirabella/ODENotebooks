@@ -202,6 +202,7 @@ home page, by week.
 | 17 | [Linear systems and the eigenvalue method](17_Linear_Systems.ipynb) | $\vec{x}\,' = A\vec{x}$ | 17-18 | 3.1-3.4, 3.6-3.8 |
 | 18 | [The phase plane and nonlinear systems](18_Phase_Plane.ipynb) | $x' = f(x, y),\ y' = g(x, y)$ | 19-20 | 3.5, 8.1-8.3 |
 | 19 | [The Laplace transform](19_Laplace_Transform.ipynb) | $F(s) = \int_0^\infty e^{-st}f(t)\,dt$ | 23-24 | 6.1, 6.2 |
+| 20 | [Steps, impulses, and convolution](20_Steps_Impulses_Convolution.ipynb) | $(f * g)(t) = \int_0^t f(\tau)\,g(t - \tau)\,d\tau$ | 25-26 | 6.2-6.4 |
 
 The **course text** is J. Lebl, *Notes on Diffy Qs: Differential Equations for Engineers*, free
 on LibreTexts; the section numbers above are those of that edition.

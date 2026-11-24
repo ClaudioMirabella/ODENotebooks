@@ -675,3 +675,18 @@ tests 206 passed; `--collect-only` 837 (`README.md` updated); ruff: no finding o
 build 24 notebooks, `test_build_site.py` 5 passed; browser 24 of 24 without errors; trial export into
 the scratch folder: 84 files, all checks passed; the public folder untouched. Still not run: the library
 tests at the browser pins in an environment of their own.
+
+### A later fix of `laplace_numeric` (2026-11-24, with notebook 20)
+
+The reviews of notebook 20 found three defects in `laplace_numeric`; the instructor approved a fix, made in two
+rounds and reviewed independently:
+* a step with the value 1/2 at its jump (`np.heaviside(t - a, 0.5)`, SymPy's `Heaviside`) was refused as
+  "does not converge", with or without `breaks`; it is now computed;
+* a steep switch without a jump (a ramp) was often refused, and about one in five returned a wrong number with
+  no error; about 99 in 100 are now right;
+* an integer too large for a float (10**400) raised OverflowError instead of the documented ValueError.
+
+Notebooks 19 and 20 give the same printed results and figures with the old and the new code. In an
+old-against-new comparison of about 18 600 seeded calls, no call that was right became wrong; about 2 in 100
+fast oscillations (sin or cos with s below omega / 20) that were computed are now refused, as the docstring
+says. 16 tests were added; no existing test was changed.

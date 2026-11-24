@@ -590,3 +590,217 @@ def test_the_initial_value_problems_of_notebook_19_against_dsolve_and_forced_res
     # the third, independent answer of the notebook: variation of parameters by quadrature
     forcing = sp.lambdify(t, right, "numpy")
     assert ol.forced_response(LAPLACE_TIMES, a, b, c, forcing, *start) == pytest.approx(exact(LAPLACE_TIMES))
+
+
+# --- steps, impulses and convolution (notebook 20; Lebl, Sections 6.2 to 6.4) -----------------------
+TAU = sp.symbols("tau", positive=True)      # the variable inside a convolution
+CONVOLUTION_TIMES = np.linspace(0.0, 4.0, 9)
+STEP_S = (0.5, 1.0, 4.0)                    # the values of s at which two transforms are compared
+STEP_AGREEMENT = 1e-12                      # two formulas for one number (relative)
+QUADRATURE_AGREEMENT = 1e-7                 # forced_response: one quad at its default tolerance
+DELAYS = (sp.Rational(1, 2), 1, 2)          # the delays a of the second shifting property
+FIRING_TIMES = (0.5, 2.0, 4.0, 2 * np.pi, 8.0)      # seconds for which the rocket of Example 6.2.2 fires
+PULSE_WIDTHS = (2.0, 1.0, 0.5, 0.05)        # the widths b of the unit pulse of notebook 20
+EQUATION_RANGES = ((1, 5), (0, 5), (1, 10))         # whole a, b, c of a y'' + b y' + c y (high excluded)
+POWER_RANGE = (0, 3)                        # f = t^n e^(-p t) cos(w t): n among 0, 1, 2
+RATE_RANGE = (-1, 3)                        # p among -1, 0, 1, 2
+FREQUENCY_RANGE = (0, 4)                    # w among 0, 1, 2, 3
+SEEDED_CONVOLUTIONS = 3                     # seeded pairs that SymPy integrates (each costs about a second)
+
+
+def unit_step(argument):
+    """Lebl's unit step in SymPy, with the value 1 at the jump (the u of notebook 20)."""
+    return sp.Heaviside(argument, 1)
+
+
+def as_function(expression):
+    """A SymPy formula in T_POSITIVE as a function of a number or an array."""
+    return sp.lambdify(T_POSITIVE, expression, "numpy")
+
+
+# f, g and the convolution f * g as printed in the book (or in notebook 20)
+_T = T_POSITIVE
+CONVOLUTIONS = {
+    "Example 6.3.1": (sp.exp(_T), _T, sp.exp(_T) - _T - 1),
+    "Example 6.3.2, omega = 3": (sp.sin(3 * _T), sp.cos(3 * _T), _T * sp.sin(3 * _T) / 2),
+    "Example 6.3.3": (_T, sp.exp(-_T), sp.exp(-_T) + _T - 1),
+    "Exercise 6.3.10": (sp.cos(_T), sp.exp(-_T), (sp.cos(_T) + sp.sin(_T) - sp.exp(-_T)) / 2),
+    "Exercise 6.3.11": (5 * _T, sp.sin(_T), 5 * _T - 5 * sp.sin(_T)),
+    "Exercise 6.3.12": (sp.sin(_T), sp.sin(_T), (sp.sin(_T) - _T * sp.cos(_T)) / 2),
+    "Exercise 6.4.11": (sp.cos(_T), sp.sin(_T), _T * sp.sin(_T) / 2),
+    # notebook 20: the force 8 e^(-t) on the hammer's system, whose impulse response is e^(-t) sin(2t) / 2
+    "notebook 20, fading force": (8 * sp.exp(-_T), sp.exp(-_T) * sp.sin(2 * _T) / 2,
+                                  2 * sp.exp(-_T) * (1 - sp.cos(2 * _T))),
+    "notebook 20, 1 * 1": (sp.Integer(1), sp.Integer(1), _T),
+    "notebook 20, resonance": (sp.cos(2 * _T), sp.sin(2 * _T) / 2, _T * sp.sin(2 * _T) / 4),
+}
+
+
+def by_the_definition(f, g):
+    """(f * g)(t) from formula (6.3.1), integrated by SymPy."""
+    return sp.integrate(f.subs(_T, TAU) * g.subs(_T, _T - TAU), (TAU, 0, _T))
+
+
+@pytest.mark.parametrize("name", sorted(CONVOLUTIONS))
+def test_the_convolutions_of_notebook_20_agree_with_sympy(name):
+    f, g, printed = CONVOLUTIONS[name]
+    assert sp.simplify(by_the_definition(f, g) - printed) == 0
+    points = CONVOLUTION_TIMES
+    expected = as_function(printed)(points) + 0 * points
+    found = ol.convolution(as_function(f), as_function(g), points)
+    assert np.all(np.abs(found - expected) <= ol.CONVOLUTION_RTOL * np.maximum(1, np.abs(expected)))
+    # Theorem 6.3.1: the transform of the convolution is the product of the transforms
+    transforms = [sp.laplace_transform(part, _T, S, noconds=True) for part in (f, g, printed)]
+    assert sp.simplify(transforms[2] - transforms[0] * transforms[1]) == 0
+
+
+def test_convolution_agrees_with_sympy_on_seeded_functions():
+    rng = np.random.default_rng(SEED)
+    for _ in range(SEEDED_CONVOLUTIONS):
+        n, p, w = (int(rng.integers(*limits)) for limits in (POWER_RANGE, RATE_RANGE, FREQUENCY_RANGE))
+        q, v = (int(rng.integers(*limits)) for limits in (RATE_RANGE, FREQUENCY_RANGE))
+        f = _T ** n * sp.exp(-p * _T) * sp.cos(w * _T)
+        g = sp.exp(-q * _T) * sp.sin(v * _T) + 1
+        expected = as_function(by_the_definition(f, g))(CONVOLUTION_TIMES[1:])
+        found = ol.convolution(as_function(f), as_function(g), CONVOLUTION_TIMES[1:])
+        assert np.all(np.abs(found - expected) <= ol.CONVOLUTION_RTOL * np.maximum(1, np.abs(expected)))
+
+
+@pytest.mark.parametrize("delay", DELAYS)
+def test_the_second_shifting_property_agrees_with_sympy(delay):
+    # (6.2.2): L{f(t - a) u(t - a)} = e^(-as) L{f(t)}, for f = t^2, e^(-2t), sin 3t, 1
+    for f in (_T ** 2, sp.exp(-2 * _T), sp.sin(3 * _T), sp.Integer(1)):
+        delayed = f.subs(_T, _T - delay) * unit_step(_T - delay)
+        by_sympy = sp.laplace_transform(delayed, _T, S, noconds=True)
+        by_rule = sp.exp(-delay * S) * sp.laplace_transform(f, _T, S, noconds=True)
+        for s in STEP_S[:2]:                                # two values of s are enough here
+            exact = complex(by_rule.subs(S, s))
+            assert complex(by_sympy.subs(S, s)) == pytest.approx(exact, rel=STEP_AGREEMENT)
+            found = ol.laplace_numeric(as_function(delayed), s, breaks=[float(delay)])
+            assert promised(found, exact.real, s)
+
+
+def test_t_times_a_step_against_sympy():
+    # notebook 20, Section 3: L{t u(t - 1)} = e^(-s) (1/s^2 + 1/s), not e^(-s)/s^2
+    by_sympy = sp.laplace_transform(_T * unit_step(_T - 1), _T, S, noconds=True)
+    assert sp.simplify(by_sympy - sp.exp(-S) * (1 / S ** 2 + 1 / S)) == 0
+    assert sp.simplify(by_sympy - sp.exp(-S) / S ** 2) != 0
+    with pytest.raises(ValueError, match="in a formula typed with SymPy write u"):
+        ol.step(_T, 1)                                      # ol.step is for numbers, not for SymPy's letters
+    with pytest.raises(ValueError, match="in a formula typed with SymPy write u"):
+        ol.step(_T - 1)
+    # a SymPy number is a number
+    assert float(ol.step(sp.pi, 3)) == 1.0 and float(ol.step(sp.Integer(2), 3)) == 0.0
+    assert float(ol.step(sp.Rational(7, 2), sp.Rational(7, 2))) == 1.0
+    # Exercise 1(b) of the notebook: L{t^2 u(t - 1)} = e^(-s) (2/s^3 + 2/s^2 + 1/s)
+    squared = sp.laplace_transform(_T ** 2 * unit_step(_T - 1), _T, S, noconds=True)
+    assert sp.simplify(squared - sp.exp(-S) * (2 / S ** 3 + 2 / S ** 2 + 1 / S)) == 0
+
+
+def test_the_rocket_of_example_6_2_2_against_sympy():
+    assert sp.simplify(sp.apart(1 / (S * (S ** 2 + 1)), S) - (1 / S - S / (S ** 2 + 1))) == 0
+    assert sp.simplify(sp.inverse_laplace_transform(1 / (S * (S ** 2 + 1)), S, _T) - (1 - sp.cos(_T))) == 0
+    transform = (sp.exp(-S) - sp.exp(-5 * S)) / (S * (S ** 2 + 1))
+    printed = (1 - sp.cos(_T - 1)) * unit_step(_T - 1) - (1 - sp.cos(_T - 5)) * unit_step(_T - 5)
+    points = np.linspace(0.0, 12.0, 49)
+    by_sympy = as_function(sp.inverse_laplace_transform(transform, S, _T))(points)
+    assert by_sympy == pytest.approx(as_function(printed)(points))
+    force = as_function(unit_step(_T - 1) - unit_step(_T - 5))
+    by_parameters = ol.forced_response(points[::4], 1, 0, 1, lambda time: float(force(time)))
+    assert by_parameters == pytest.approx(as_function(printed)(points[::4]), abs=QUADRATURE_AGREEMENT)
+    # after the stop, for t >= 5: cos(t - 5) - cos(t - 1) = 2 sin 2 sin(t - 3)
+    after = sp.cos(_T - 5) - sp.cos(_T - 1)
+    assert sp.simplify(sp.expand_trig(after - 2 * sp.sin(2) * sp.sin(_T - 3))) == 0
+
+
+@pytest.mark.parametrize("duration", FIRING_TIMES)
+def test_the_amplitude_after_a_firing_of_any_duration(duration):
+    # Lebl, Exercise 6.2.10: fired from t = 1 for d seconds, then x = 2 sin(d/2) sin(t - 1 - d/2)
+    off = 1 + duration
+    equation = sp.Eq(y(t).diff(t, 2) + y(t), 1)             # while the rocket fires, from rest at t = 1
+    firing = sp.dsolve(equation, y(t), ics={y(1): 0, y(t).diff(t).subs(t, 1): 0}).rhs
+    at_stop = [float(firing.subs(t, off)), float(firing.diff(t).subs(t, off))]
+    assert float(np.hypot(*at_stop)) == pytest.approx(2 * abs(np.sin(duration / 2)), abs=STEP_AGREEMENT)
+    points = off + np.linspace(0.0, 7.0, 15)
+    free = at_stop[0] * np.cos(points - off) + at_stop[1] * np.sin(points - off)
+    as_one_sine = 2 * np.sin(duration / 2) * np.sin(points - 1 - duration / 2)
+    assert free == pytest.approx(as_one_sine, abs=STEP_AGREEMENT)
+    assert free == pytest.approx(np.cos(points - off) - np.cos(points - 1), abs=STEP_AGREEMENT)
+
+
+def test_the_unit_pulse_of_notebook_20_and_its_limits():
+    width = sp.symbols("b", positive=True)
+    # its transform (1 - e^(-bs))/(bs) tends to 1, and the amplitude (2/b) sin(b/2) after it tends to 1
+    transform = sp.laplace_transform((1 - unit_step(_T - width)) / width, _T, S, noconds=True)
+    assert sp.simplify(transform - (1 - sp.exp(-width * S)) / (width * S)) == 0
+    assert sp.limit((1 - sp.exp(-width * S)) / (width * S), width, 0) == 1
+    assert sp.limit(2 / width * sp.sin(width / 2), width, 0) == 1
+    for b in PULSE_WIDTHS:                                  # x'' + x = (u(t) - u(t - b))/b from rest
+        points = b + np.linspace(0.0, 7.0, 15)
+        after = (np.cos(points - b) - np.cos(points)) / b   # the two delayed pieces, for t >= b
+        assert after == pytest.approx(2 / b * np.sin(b / 2) * np.sin(points - b / 2), abs=STEP_AGREEMENT)
+        by_convolution = ol.convolution(lambda time, b=b: (1.0 - ol.step(time, b)) / b, np.sin, points,
+                                        breaks=[b])
+        assert by_convolution == pytest.approx(after, abs=ol.CONVOLUTION_RTOL)
+
+
+def test_the_hammer_of_notebook_20_against_sympy():
+    # x'' + 2x' + 5x = 3 delta(t) from rest: X(s) = 3/(s^2 + 2s + 5), x = (3/2) e^(-t) sin 2t
+    printed = sp.Rational(3, 2) * sp.exp(-_T) * sp.sin(2 * _T)
+    assert sp.simplify(sp.inverse_laplace_transform(3 / (S ** 2 + 2 * S + 5), S, _T) - printed) == 0
+    assert sp.laplace_transform(sp.DiracDelta(_T - 2), _T, S, noconds=True) == sp.exp(-2 * S)
+    # the same function is the free motion with x(0) = 0 and x'(0) = P/m = 3
+    equation = sp.Eq(y(t).diff(t, 2) + 2 * y(t).diff(t) + 5 * y(t), 0)
+    free = closed_form(equation, {y(0): 0, y(t).diff(t).subs(t, 0): 3})
+    assert free(LAPLACE_TIMES) == pytest.approx(as_function(printed)(LAPLACE_TIMES))
+    assert 3 * ol.impulse_response(LAPLACE_TIMES, 1, 2, 5) == pytest.approx(free(LAPLACE_TIMES))
+    assert printed.subs(_T, 0) == 0 and printed.diff(_T).subs(_T, 0) == 3
+    # the largest displacement: where tan 2t = 2
+    peak = sp.atan(2) / 2
+    assert sp.simplify(printed.diff(_T).subs(_T, peak)) == 0
+    assert float(printed.subs(_T, peak)) == pytest.approx(0.7713, abs=1e-4)
+
+
+def test_impulse_response_agrees_with_dsolve_and_with_the_transfer_function():
+    rng = np.random.default_rng(SEED)
+    for _ in range(CASES):
+        a, b, c = (int(rng.integers(*limits)) for limits in EQUATION_RANGES)
+        equation = sp.Eq(a * y(t).diff(t, 2) + b * y(t).diff(t) + c * y(t), 0)
+        exact = closed_form(equation, {y(0): 0, y(t).diff(t).subs(t, 0): sp.Rational(1, a)})
+        points = LAPLACE_TIMES
+        assert ol.impulse_response(points, a, b, c) == pytest.approx(exact(points) + 0 * points)
+        inverse = sp.inverse_laplace_transform(1 / (a * S ** 2 + b * S + c), S, _T)       # of H(s)
+        assert as_function(inverse)(points[1:]) == pytest.approx(exact(points[1:]))
+
+
+def test_the_exercises_of_notebook_20_against_sympy():
+    points = np.linspace(0.0, 6.0, 25)
+    # Lebl, Exercise 6.2.6: x'' + x = u(t - 1) from rest gives (1 - cos(t - 1)) u(t - 1)
+    answer_626 = (1 - sp.cos(_T - 1)) * unit_step(_T - 1)
+    inverse = sp.inverse_laplace_transform(sp.exp(-S) / (S * (S ** 2 + 1)), S, _T)
+    assert as_function(inverse)(points) == pytest.approx(as_function(answer_626)(points))
+    found = ol.convolution(lambda time: ol.step(time, 1), np.sin, points)
+    assert found == pytest.approx(as_function(answer_626)(points), abs=ol.CONVOLUTION_RTOL)
+    # Lebl, Exercise 6.4.3: x'' + 4x = 4 delta(t - 1) from rest gives 2 sin(2 (t - 1)) u(t - 1)
+    answer_643 = 2 * sp.sin(2 * (_T - 1)) * unit_step(_T - 1)
+    inverse = sp.inverse_laplace_transform(4 * sp.exp(-S) / (S ** 2 + 4), S, _T)
+    assert as_function(inverse)(points) == pytest.approx(as_function(answer_643)(points))
+    assert 4 * ol.impulse_response(points - 1, 1, 0, 4) == pytest.approx(as_function(answer_643)(points))
+    # Lebl, Exercise 6.2.14 (answer printed): x'' - x = (t^2 - 1) u(t - 1), x(0) = 1, x'(0) = 2
+    before = -sp.exp(-_T) / 2 + 3 * sp.exp(_T) / 2
+    after = 2 * sp.exp(_T - 1) - _T ** 2 - 1 + before
+    assert sp.simplify(before.diff(_T, 2) - before) == 0
+    assert sp.simplify(after.diff(_T, 2) - after - (_T ** 2 - 1)) == 0
+    assert before.subs(_T, 0) == 1 and before.diff(_T).subs(_T, 0) == 2
+    assert sp.simplify((after - before).subs(_T, 1)) == 0                   # no jump of x at t = 1
+    assert sp.simplify((after - before).diff(_T).subs(_T, 1)) == 0          # and none of x'
+    # Exercise 3(v) of the notebook: a second blow at t = pi stops the mass of x'' + x
+    later = np.pi + np.linspace(0.0, 6.0, 13)
+    both = ol.impulse_response(later, 1, 0, 1) + ol.impulse_response(later - np.pi, 1, 0, 1)
+    assert both == pytest.approx(0.0, abs=STEP_AGREEMENT)
+    # Exercise 3(ii): two firings of 4 seconds, the second from 1 + 3 pi: the mass ends at rest
+    second = 1 + 3 * np.pi
+    end = second + 4 + np.linspace(0.0, 6.0, 13)
+    switches = ((1, 1), (-1, 5), (1, second), (-1, second + 4))             # on, off, on, off
+    twice = sum(sign * (1 - np.cos(end - time)) for sign, time in switches)
+    assert twice == pytest.approx(0.0, abs=STEP_AGREEMENT)

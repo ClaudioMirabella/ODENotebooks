@@ -58,7 +58,53 @@ NAME_19 = "19_Laplace_Transform.ipynb"
 WRONG_FORMULA = "not yet (your formula does not give the right values"
 SPRING_NOT_DIVIDED = "my_spring_2d = sp.exp(-t) * (2 * sp.cos(3 * t) + 3 * sp.sin(3 * t))"    # not 3 / omega
 SPRING_WITH_PHASE = "my_spring_2d = sp.sqrt(5) * sp.exp(-t) * sp.cos(3 * t - sp.atan(sp.Rational(1, 2)))"
+NAME_20 = "20_Steps_Impulses_Convolution.ipynb"
+CASES_BOOK = "my_cases_2a = (t - 1) * (u(t - 1) - u(t - 2)) + u(t - 2)"            # Lebl's printed answer
+CASES_TWO_RAMPS = "my_cases_2a = (t - 1) * u(t - 1) - (t - 2) * u(t - 2)"          # the same function
+CASES_HEAVISIDE = ("my_cases_2a = (t - 1) * (sp.Heaviside(t - 1) - sp.Heaviside(t - 2)) "
+                   "+ sp.Heaviside(t - 2)")                                         # SymPy's own step
+CASES_PIECEWISE = "my_cases_2a = sp.Piecewise((0, t < 1), (t - 1, t < 2), (1, True))"
+BLOW_CUT_OFF = "my_blow_2c = 2 * sp.sin(2 * t) * u(t - 1)"                         # cut off, not delayed
+BLOW_DOUBLE_ANGLE = "my_blow_2c = 4 * sp.sin(t - 1) * sp.cos(t - 1) * u(t - 1)"    # the same as the answer
+BLOW_TWICE = "my_blow_2c = 4 * sp.sin(2 * (t - 1)) * u(t - 1)"                     # the 1/2 of h forgotten
+PRODUCT_2D = "my_convolution_2d = sp.cos(t) * sp.exp(-t)"                          # the ordinary product
+NO_STEP_HINT = "not yet (before t = 1 nothing has moved: multiply by u(t - 1))"
+CUT_OFF_HINT = "cut off before t = 1, not delayed: write t - 1 in place of every t)"
+SWITCH_LATE_2B = "my_switch_2b = (1 - sp.cos(t - 1)) * u(t - 1.2)"       # the switch too late
+BLOW_LATE_2C = "my_blow_2c = 2 * sp.sin(2 * (t - 1)) * u(t - 1.4)"
+HAMMER_NUMBERS = "MY_MASS, MY_DAMPER, MY_SPRING, MY_BLOW = 1.0, 2.0, 5.0, 3.0"
+CONVOLUTION_ONE_SINE = "my_convolution_2d = sp.sqrt(2) * sp.sin(t + sp.pi / 4) / 2 - sp.exp(-t) / 2"
 EXERCISES = {
+    NAME_20: {
+        "answers": {
+            "my_window_at_4 = None": "my_window_at_4 = 1",
+            "my_window_at_6 = None": "my_window_at_6 = 0",
+            "my_shift_rule = None": "my_shift_rule = False",
+            "my_velocity = None": "my_velocity = 3",
+            "my_delta_at_0 = None": "my_delta_at_0 = 1",
+            "my_cases_2a = None": CASES_BOOK,
+            "my_switch_2b = None": "my_switch_2b = (1 - sp.cos(t - 1)) * u(t - 1)",
+            "my_blow_2c = None": "my_blow_2c = 2 * sp.sin(2 * (t - 1)) * u(t - 1)",
+            "my_convolution_2d = None": "my_convolution_2d = (sp.cos(t) + sp.sin(t) - sp.exp(-t)) / 2",
+        },
+        "solved": ("Exercise 1a, at t = 4: correct", "Exercise 1a, at t = 6: correct",
+                   "Exercise 1b: correct", "Exercise 1c: correct", "Exercise 1d: correct",
+                   "Exercise 2a: correct", "Exercise 2b: correct", "Exercise 2c: correct",
+                   "Exercise 2d: correct"),
+        "unsolved": ("Exercise 1a, at t = 4: no answer yet", "Exercise 1b: no answer yet",
+                     "Exercise 1d: no answer yet", "Exercise 2a: no answer yet",
+                     "Exercise 2d: no answer yet"),
+        "wrong": ({"my_window_at_4 = None": "my_window_at_4 = 0",
+                   "my_window_at_6 = None": "my_window_at_6 = 1",
+                   "my_shift_rule = None": "my_shift_rule = True",
+                   "my_velocity = None": "my_velocity = 12",                        # P times m
+                   "my_delta_at_0 = None": "my_delta_at_0 = 0",
+                   "my_cases_2a = None": "my_cases_2a = (t - 1) * u(t - 1) + u(t - 2)",     # no window
+                   "my_switch_2b = None": "my_switch_2b = 1 - sp.cos(t - 1)",       # the step forgotten
+                   "my_blow_2c = None": BLOW_CUT_OFF,
+                   "my_convolution_2d = None": PRODUCT_2D},
+                  "Exercise 2d: " + WRONG_FORMULA),
+    },
     NAME_19: {
         "answers": {
             "my_transform_1a = None": "my_transform_1a = 1 / (s - 3)",
@@ -921,6 +967,135 @@ def test_notebook_19_survives_the_numbers_a_student_changes(changes, line):
     assert line in text
 
 
+@pytest.mark.parametrize("answers, message", [
+    # other accepted forms: any equivalent formula, SymPy's own step, a function by cases, 6 / 2 for 3
+    ({"my_cases_2a = None": CASES_TWO_RAMPS}, "Exercise 2a: correct"),
+    ({"my_cases_2a = None": CASES_HEAVISIDE}, "Exercise 2a: correct"),
+    ({"my_cases_2a = None": CASES_PIECEWISE}, "Exercise 2a: correct"),
+    ({"my_switch_2b = None": "my_switch_2b = u(t - 1) - sp.cos(t - 1) * u(t - 1)"}, "Exercise 2b: correct"),
+    ({"my_blow_2c = None": BLOW_DOUBLE_ANGLE}, "Exercise 2c: correct"),
+    ({"my_convolution_2d = None": CONVOLUTION_ONE_SINE}, "Exercise 2d: correct"),
+    ({"my_velocity = None": "my_velocity = 6 / 2"}, "Exercise 1c: correct"),
+    ({"my_delta_at_0 = None": "my_delta_at_0 = np.exp(0)"}, "Exercise 1d: correct"),
+    # wrong answers, each with its message
+    ({"my_window_at_4 = None": 'my_window_at_4 = "1"'},
+     "Exercise 1a, at t = 4: not yet (type your answer without quotes"),
+    ({"my_window_at_6 = None": "my_window_at_6 = 1"},
+     "Exercise 1a, at t = 6: not yet (your value 1, try again)"),
+    ({"my_shift_rule = None": "my_shift_rule = True"}, "Exercise 1b: not yet"),
+    ({"my_shift_rule = None": "my_shift_rule = True"}, "(is t^2 u(t - 1) a delayed t^2, or t^2 cut off?"),
+    ({"my_velocity = None": "my_velocity = 12"}, "Exercise 1c: not yet (your value 12, try again)"),
+    ({"my_velocity = None": "my_velocity = 0"}, "Exercise 1c: not yet (your value 0, try again)"),   # x'(0)
+    ({"my_delta_at_0 = None": "my_delta_at_0 = 0"}, "Exercise 1d: not yet (your value 0, try again)"),
+    ({"my_cases_2a = None": "my_cases_2a = t - 1"}, "Exercise 2a: " + WRONG_FORMULA),
+    ({"my_cases_2a = None": 'my_cases_2a = "(t - 1) * u(t - 1)"'},
+     "Exercise 2a: not yet (type the formula without quotes)"),
+    # the mistakes that the notebook teaches get a sentence of their own (clarity review of notebook 20)
+    ({"my_cases_2a = None": "my_cases_2a = (t - 1) * u(t - 1) + u(t - 2)"},
+     "Exercise 2a: not yet (the piece t - 1 is never switched off: give it a window, u(t - 1) - u(t - 2))"),
+    ({"my_switch_2b = None": "my_switch_2b = 1 - sp.cos(t - 1)"}, "Exercise 2b: " + NO_STEP_HINT),
+    ({"my_switch_2b = None": "my_switch_2b = (1 - sp.cos(t)) * u(t - 1)"},
+     "Exercise 2b: not yet (this is 1 - cos t " + CUT_OFF_HINT),
+    ({"my_blow_2c = None": "my_blow_2c = 2 * sp.sin(2 * (t - 1))"}, "Exercise 2c: " + NO_STEP_HINT),
+    # a switch at the wrong time is not accepted (code review, RISK 4)
+    ({"my_cases_2a = None": "my_cases_2a = (t - 1) * (u(t - 1) - u(t - 1.8)) + u(t - 1.8)"},
+     "Exercise 2a: " + WRONG_FORMULA),
+    ({"my_switch_2b = None": SWITCH_LATE_2B}, "Exercise 2b: " + WRONG_FORMULA),
+    ({"my_blow_2c = None": BLOW_LATE_2C}, "Exercise 2c: " + WRONG_FORMULA),
+    # u with a number inside a formula: u(3) is 1
+    ({"my_switch_2b = None": "my_switch_2b = (1 - sp.cos(t - 1)) * u(t - 1) * u(3)"}, "Exercise 2b: correct"),
+    ({"my_switch_2b = None": "my_switch_2b = sp.exp(-s) / (s * (s ** 2 + 1))"},     # X(s) typed for x(t)
+     "Exercise 2b: not yet (write the formula with the letter t only; it also contains s)"),
+    ({"my_blow_2c = None": BLOW_CUT_OFF}, "Exercise 2c: not yet (this is 2 sin 2t " + CUT_OFF_HINT),
+    ({"my_blow_2c = None": BLOW_TWICE},
+     "Exercise 2c: not yet (the row of sin 2t has a 2 on top: 4/(s^2 + 4) is 2 times 2/(s^2 + 4))"),
+    ({"my_convolution_2d = None": PRODUCT_2D}, "Exercise 2d: " + WRONG_FORMULA),
+    ({"my_convolution_2d = None": "my_convolution_2d = (sp.cos(t) + sp.sin(t) + sp.exp(-t)) / 2"},
+     "Exercise 2d: " + WRONG_FORMULA),
+])
+def test_notebook_20_particular_answers(answers, message):
+    try:
+        text = printed(execute(with_answers(NAME_20, answers)))
+    except Exception as problem:                               # a wrong answer must never stop the notebook
+        pytest.fail(f"the notebook stopped: {str(problem)[-300:]}")
+    assert message in text
+
+
+def test_notebook_20_sections_can_be_run_again_after_the_exercises():
+    # the lesson of notebook 15: no global name of the sections is redefined by an exercise
+    nb = with_answers(NAME_20, EXERCISES[NAME_20]["answers"])
+    again = [cell.source for cell in nb.cells if cell.cell_type == "code"
+             and "import odelib as ol" not in cell.source and "interact(" not in cell.source]
+    nb.cells.extend(nbformat.v4.new_code_cell(source) for source in again)
+    text = printed(execute(nb))
+    assert text.count("Exercise 2d: correct") == 2 and text.count("step 4, by SymPy: x(t) =") == 2
+
+
+@pytest.mark.parametrize("changes, line", [
+    # the numbers that the comments of the cells invite a student to change: no bare AssertionError
+    ({"A_SWITCH = 2.0 ": "A_SWITCH = 0.5 "}, "L{u(t - 0.5)}:"),
+    ({"A_SWITCH = 2.0 ": "A_SWITCH = 0.0 "}, "L{u(t - 0)}:"),
+    ({"A_SWITCH = 2.0 ": "A_SWITCH = 7.0 "}, "L{u(t - 7)}:"),                       # beyond the picture
+    ({"DELAY = 2.0 ": "DELAY = 3.5 "}, "0.01509869"),                               # e^(-3.5) / 2, at s = 1
+    ({"DELAY = 2.0 ": "DELAY = 0.0 "}, "0.50000000"),                               # sin t itself, at s = 1
+    ({"S_PULSE = 1.0 ": "S_PULSE = 3.0 "}, "the transform of the unit pulse at s = 3"),
+    ({"SIFT_AT = 1.0 ": "SIFT_AT = 0.0 "}, "cos(0) = 1.000000"),
+    ({"SIFT_AT = 1.0 ": "SIFT_AT = -2.5 "}, "from a = -2.5 to a + b"),
+    ({"ROCKET_ON, ROCKET_OFF = 1.0, 5.0 ": "ROCKET_ON, ROCKET_OFF = 2.0, 6.0 "},    # the checks hold for any
+     "while the rocket fires: x between 0.00 and 2.00; at the stop x = 1.65"),      # firing of 4 seconds
+    ({"CUT = 1.0 ": "CUT = 0.0 "}, "the right formula   the wrong formula"),        # nothing is cut off
+    ({HAMMER_NUMBERS: "MY_MASS, MY_DAMPER, MY_SPRING, MY_BLOW = 2.0, 0.0, 10.0, 5.0"},
+     "velocity just after the blow: P/m = 2.5 m/second"),
+    ({HAMMER_NUMBERS: "MY_MASS, MY_DAMPER, MY_SPRING, MY_BLOW = 0.5, 6.0, 1.0, -1.0"},
+     "velocity just after the blow: P/m = -2 m/second"),
+    # the first time at which the largest |x| is reached (re-check of notebook 20, finding 3)
+    ({HAMMER_NUMBERS: "MY_MASS, MY_DAMPER, MY_SPRING, MY_BLOW = 2.0, 0.0, 5.0, 3.0"},
+     "largest |x| 0.949 m, first at t = 0.99 seconds"),
+    ({HAMMER_NUMBERS: "MY_MASS, MY_DAMPER, MY_SPRING, MY_BLOW = 1.0, 2.0, 5.0, -3.0"},
+     "largest |x| 0.771 m, first at t = 0.55 seconds"),
+])
+def test_notebook_20_survives_the_numbers_a_student_changes(changes, line):
+    try:
+        text = printed(execute(with_answers(NAME_20, changes)))
+    except Exception as problem:
+        pytest.fail(f"the notebook stopped: {str(problem)[-300:]}")
+    assert line in text
+
+
+@pytest.mark.parametrize("changes, sentence", [
+    # the numbers of the text: a cell that checks them stops with a sentence, not with a bare AssertionError
+    ({"BLOW = 3.0 ": "BLOW = 5.0 "}, "put those numbers back, and try your own in the cell after the figure"),
+    ({"MASS, DAMPER, SPRING = 1.0, 2.0, 5.0 ": "MASS, DAMPER, SPRING = 2.0, 0.0, 10.0 "},
+     "put those numbers back, and try your own in the cell after the figure"),
+    ({"FORCE_START, FORCE_RATE = 8.0, 1.0 ": "FORCE_START, FORCE_RATE = 4.0, 2.0 "}, "put 8.0 and 1.0 back"),
+    ({"S_PULSE = 1.0 ": "S_PULSE = 0.0 "}, "S_PULSE must be larger than 0"),
+    ({"ROCKET_ON, ROCKET_OFF = 1.0, 5.0 ": "ROCKET_ON, ROCKET_OFF = 1.0, 1.0 + 2 * np.pi "},
+     "put 1.0 and 5.0 back, and use the slider below for other firing times"),
+])
+def test_notebook_20_cells_of_the_text_stop_with_a_sentence(changes, sentence):
+    with pytest.raises(nbclient.exceptions.CellExecutionError, match="AssertionError") as stopped:
+        execute(with_answers(NAME_20, changes))
+    assert sentence in str(stopped.value)
+
+
+def test_notebook_20_u_is_one_step_for_formulas_and_for_numbers():
+    nb = nbformat.read(NOTEBOOKS / NAME_20, as_version=4)
+    lines = ["print(u(np.array([1.0, 2.0, 3.0]) - 2), u(2.5 - 2), u(t - 2), u(sp.Integer(3) - 2))",
+             "t = np.linspace(0.0, 3.0, 4)", "u = 5.0"]            # what a student may do in Exercise 3
+    nb.cells.append(nbformat.v4.new_code_cell(chr(10).join(lines)))
+    reset = [cell for cell in nb.cells if cell.cell_type == "code" and "u = step_in_formulas" in cell.source]
+    assert len(reset) == 2                                  # the cell before the answers, and the answer cell
+    answers = EXERCISES[NAME_20]["answers"]
+    for cell in reset:                                      # Exercise 2 run again, with the right answers
+        source = cell.source
+        for placeholder, answer in answers.items():
+            source = source.replace(placeholder, answer)
+        nb.cells.append(nbformat.v4.new_code_cell(source))
+    text = printed(execute(nb))
+    assert "[0. 1. 1.] 1.0 Heaviside(t - 2, 1) 1" in text
+    assert "Exercise 2a: correct" in text and "Exercise 2c: correct" in text
+
+
 def test_is_exact_written_with_an_equation_gets_a_hint_not_a_traceback():
     name = "12_Exact_Equations.ipynb"
     text = printed(execute(with_answers(name, {FILL_IN: "    return sp.Eq(sp.diff(M, y), sp.diff(N, x))"})))
@@ -1029,6 +1204,13 @@ def test_an_error_still_stops_a_notebook_that_uses_the_library():
 # Slider functions at the ends of their sliders: the cases that used to stop with a traceback
 # or draw an empty picture (review of 2026-11-17). Each line is run in a cell added at the end.
 EXTREMES = {
+    NAME_20: ("plot_rocket(d=0.5)", "plot_rocket(d=8.0)", "plot_rocket(d=4.0)",
+              "plot_rocket(d=0.5 + 75 * 0.1)",                        # 8.0 as the slider gives it
+              "plot_rocket(d=0.5 + 58 * 0.1)",                        # 6.3, the position nearest to 2 pi
+              "plot_rocket(d=2 * np.pi)", "plot_rocket(d=np.pi)",     # at rest; the largest amplitude
+              "plot_pulse(b=0.05)", "plot_pulse(b=2.0)", "plot_pulse(b=1.0)",
+              "plot_pulse(b=0.05 + 39 * 0.05)",                       # 2.0 as the slider gives it
+              "plot_pulse(b=0.05 + 1 * 0.05)", "plot_pulse(b=0.05 + 9 * 0.05)"),    # other values
     NAME_19: ("plot_area(s=0.5)", "plot_area(s=5.0)", "plot_area(s=1.0)",
               "plot_area(s=0.5 + 45 * 0.1)",                          # 5.0 as the slider gives it
               "plot_circuit(R=0.5)", "plot_circuit(R=8.0)",

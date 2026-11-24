@@ -60,6 +60,10 @@ The phase plane (notebook 18)
 The Laplace transform (notebook 19)
     laplace_numeric               F(s) at one s, by the integral that defines it (Lebl 6.1)
     laplace_table, LaplaceRow     Lebl's Table 6.1.1 as data: f(t), F(s) and the range of s (Lebl 6.1)
+Steps, impulses and convolution (notebook 20)
+    step                          Lebl's unit step u(t - a): 0 before the time a, 1 from a on (Lebl 6.1, 6.2)
+    convolution                   (f * g)(t), the integral of f(tau) g(t - tau) from 0 to t (Lebl 6.3)
+    impulse_response              a y'' + b y' + c y = delta(t) from rest (Lebl 6.4)
 Exercises
     check                         compare an answer found by hand with the expected one
     check_formula                 the same for a formula typed as a SymPy expression
@@ -80,8 +84,10 @@ REASON_SINGULAR, REASON_SINGULAR_UNSTABLE, PORTRAIT_STEPS, ESCAPE_MARGIN, DIRECT
 MIN_GRID, ARROW_WIDTH, TRAJECTORY_ARROW_AT,
 TRAJECTORY_WIDTH, START_DOT_SIZE, ARROW_HEAD_SIZE, ARROW_HEAD_SPAN, LAPLACE_RTOL, LAPLACE_RTOL_RANGE,
 LAPLACE_HORIZON, LAPLACE_UNIT_RATE, LAPLACE_EDGES, LAPLACE_EDGE_RATIO, LAPLACE_SHIFTS,
-LAPLACE_GROWTH_TIMES, LAPLACE_SCAN, LAPLACE_JUMP_RATIO, LAPLACE_MAX_JUMPS,
+LAPLACE_GROWTH_TIMES, LAPLACE_SCAN, LAPLACE_JUMP_RATIO, LAPLACE_MAX_JUMPS, LAPLACE_NARROW,
 LAPLACE_DEMO_A, LAPLACE_DEMO_OMEGA, LAPLACE_DEMO_N, LAPLACE_ROW_NAMES,
+STEP_START, CONVOLUTION_RTOL, CONVOLUTION_PIECES, CONVOLUTION_SCAN, CONVOLUTION_WINDOW,
+CONVOLUTION_JUMP_RATIO, CONVOLUTION_MAX_JUMPS, CONVOLUTION_NARROW,
 CHECK_TOLERANCE, ROUNDED, FORMULA_SAMPLES,
 RESIDUAL_ROUNDING, PORTRAIT_WORDS, STABILITY_WORDS, KIND_SYNONYMS; the guide and the hints:
 GUIDE_START, GUIDE_TYPING, GUIDE_TYPING_RULE, GUIDE_ERRORS, GUIDE_HOW, GUIDE_WORDS, GUIDE_TOPICS,
@@ -1640,11 +1646,13 @@ LAPLACE_GROWTH_TIMES = (0.8, 0.9, 1.0)  # the parts of the last time T at which 
 # Before integrating, f is looked at on LAPLACE_SCAN equal steps of every piece. A step on which f changes
 # more than LAPLACE_JUMP_RATIO times what it changes on a neighboring step is taken as a jump (a switch,
 # the end of a pulse); the jump is located by halving the step, and the integral is cut there, as if
-# ``breaks`` had named it. A cut that was not needed costs time only. A piece with more than
+# ``breaks`` had named it. A cut that was not needed costs time, and now and then a refusal where a
+# number was possible (the accuracy asked of each piece grows with their number). A piece with more than
 # LAPLACE_MAX_JUMPS such steps is a fast oscillation, not a list of switches, and is left whole.
 LAPLACE_SCAN = 256
 LAPLACE_JUMP_RATIO = 8.0
 LAPLACE_MAX_JUMPS = 8
+LAPLACE_NARROW = 1e-12          # two cuts nearer than this part of their place are one (as in convolution)
 LAPLACE_DEMO_A = 2.0            # the constants of the table printed in notebook 19: e^(-2t),
 LAPLACE_DEMO_OMEGA = 3.0        # sin(3t), cos(3t), sinh(3t), cosh(3t)
 LAPLACE_DEMO_N = 3              # and t^3 (a row of its own in Lebl's Table 6.1.1)
@@ -1656,7 +1664,7 @@ def _one_real_number(name: str, value: float) -> float:
     try:
         refused = isinstance(value, (bool, np.bool_, str, bytes)) or np.iscomplexobj(value)
         number = float("nan") if refused else float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):        # OverflowError: an integer too large for a float
         number = float("nan")
     if not np.isfinite(number):
         raise ValueError(f"{name} must be one finite real number, got {value!r}")
@@ -1678,7 +1686,9 @@ def laplace_numeric(f: Callable[[float], float], s: float, *, rtol: float = LAPL
     How it is computed. With u = max(|s|, 1) t the interval is cut into pieces whose edges double, from
     about 1e-6 to about 1e6 in u (LAPLACE_EDGES), at the breaks, and at the jumps of f that a first look
     at f finds by itself (LAPLACE_SCAN equal steps on every piece; a jump is located by halving its
-    step); beyond the time
+    step, and the integral is cut there and at the two ends of that step, so that a switch that closes
+    steeply without a jump is computed too; two cuts at one place are one cut, whatever value f has at
+    the jump itself); beyond the time
     T = LAPLACE_HORIZON / |s| the weight e^(-st) is not a number of the computer any more and the
     integrand is taken as 0. The sum over the pieces is computed twice, on two different sets of
     pieces. The result is accepted when (a) scipy's quad is in doubt on no piece, (b) the errors it
@@ -1711,6 +1721,14 @@ def laplace_numeric(f: Callable[[float], float], s: float, *, rtol: float = LAPL
         is cut at their ends. A narrower one (a pulse 0.001 wide at t = 5) can be missed, and then
         a wrong number is returned with no error, the transform of f without the pulse: name its
         ends in ``breaks`` and it is computed. e^(-at) is right up to a of about 1e8.
+      * A switch that closes steeply without a jump (a ramp from 0 to 1) is computed in about 99
+        cases in 100 when it lasts 1/10000 of its starting time or more; the others are refused or,
+        a few in 1000, wrong by a little with no error. A steeper one (1/100000 of its starting time)
+        is wrong, by a little and with no error, about one time in four. Name the two ends of a ramp
+        in ``breaks`` and it is computed.
+      * A fast oscillation (sin or cos of omega t with s below about omega / 20) and a function that
+        repeats (a square wave) are sometimes refused although the integral converges: the refusal
+        is the safe answer, and a larger s or ``breaks`` at the switches gives the number.
 
     ValueError, with one sentence: s that is not a finite real number; f that is not a function, that
     does not take one number, that returns something that is not one real number (text, a complex
@@ -1794,18 +1812,24 @@ def laplace_numeric(f: Callable[[float], float], s: float, *, rtol: float = LAPL
             marked = [index for index, change in enumerate(changes)
                       if change > LAPLACE_JUMP_RATIO * beside[index] and change > floor]
             if len(marked) <= LAPLACE_MAX_JUMPS:
-                for index in marked:                      # halve the step until the jump is located
-                    low, high = points[index], points[index + 1]
+                for index in marked:                      # halve the step: where is f half way between
+                    low, high = points[index], points[index + 1]            # its values on the two sides?
                     below, above = values[index], values[index + 1]
                     middle = (low + high) / 2
                     while low < middle < high:
                         between = value_at(middle / scale)
                         if abs(between - below) <= abs(between - above):
-                            low, below = middle, between
+                            low = middle
                         else:
-                            high, above = middle, between
+                            high = middle
                         middle = (low + high) / 2
-                    found.add(high)                       # low and high are now neighboring numbers
+                    # low and high are now neighboring numbers. At a jump f differs across them, and
+                    # one cut is enough. Otherwise f closes steeply without a jump: the step is also cut
+                    # at its two ends, so that the steep part lies in pieces of its own.
+                    if 2 * abs(value_at(high / scale) - value_at(low / scale)) >= abs(above - below):
+                        found.add(high)
+                    else:
+                        found.update((points[index], high, points[index + 1]))
             left = right
         return found
 
@@ -1816,8 +1840,16 @@ def laplace_numeric(f: Callable[[float], float], s: float, *, rtol: float = LAPL
         while edge < last:
             edges.add(edge)
             edge *= LAPLACE_EDGE_RATIO
-        edges.update(scale * point for point in jumps if 0.0 < scale * point < last)
-        ordered = sorted(edges)
+        named = {scale * point for point in jumps if 0.0 < scale * point < last}
+        ordered = [0.0]
+        for edge in sorted((edges | named) - {0.0, last}):
+            if last - edge <= LAPLACE_NARROW * last:
+                continue                                  # at the last edge, which is a cut already
+            if edge - ordered[-1] > LAPLACE_NARROW * edge:
+                ordered.append(edge)
+            elif edge in named and 0.0 < ordered[-1] and ordered[-1] not in named:
+                ordered[-1] = edge                        # of two cuts at one place, the named break stays
+        ordered.append(last)
         pieces = list(zip(ordered[:-1], ordered[1:], strict=True))
         if last < end:
             pieces.append((last, end))                    # s = 0, or a very small s: the rest at once
@@ -1957,6 +1989,273 @@ def laplace_table(*, a: float = LAPLACE_DEMO_A, omega: float = LAPLACE_DEMO_OMEG
         _laplace_row("cosh", lambda t: np.cosh(omega * t), lambda s: s / (s ** 2 - omega ** 2), omega,
                      "cosh(omega t)", "s/(s^2 - omega^2)"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Steps, impulses and convolution (notebook 20; Lebl, Sections 6.2 to 6.4)
+# ---------------------------------------------------------------------------
+# Conventions: t is the time, and t = 0 is when the problem starts. At the jump itself the unit step is 1,
+# u(0) = 1, as Lebl defines it (Example 6.1.4); no transform and no solution depends on that one value.
+STEP_START = 0.0                # the default a of step: u(t), the switch that closes at t = 0
+CONVOLUTION_RTOL = 1e-8         # accuracy asked of the integral: rtol max(1, |value|), the rule of check
+# The integral from 0 to t is computed twice, as a sum over equal pieces of [0, t]: so many in the first
+# computation and so many in the second. The two sums must agree, or convolution refuses to answer.
+CONVOLUTION_PIECES = (4, 5)
+# Before integrating, f and g are looked at on CONVOLUTION_SCAN equal steps of [0, t]. A step on which a
+# function changes more than CONVOLUTION_JUMP_RATIO times the typical change (the median) of the
+# CONVOLUTION_WINDOW steps on each side of it is taken as a jump; the place where the function is half way
+# between its two sides is located by halving the step, and the integral is cut there and at the two ends
+# of the step, as if ``breaks`` had named them. More than CONVOLUTION_MAX_JUMPS such steps are a fast
+# oscillation, not a list of switches: then nothing is cut. The two numbers are those of laplace_numeric,
+# on purpose, under names of their own: a later change of that function does not reach this one unseen.
+CONVOLUTION_SCAN = 256
+CONVOLUTION_WINDOW = 4
+CONVOLUTION_JUMP_RATIO = LAPLACE_JUMP_RATIO
+CONVOLUTION_MAX_JUMPS = LAPLACE_MAX_JUMPS
+# Two cuts nearer to each other than this part of t are one cut: a piece that narrow adds nothing that
+# can be seen at CONVOLUTION_RTOL, and quad cannot integrate over two neighboring numbers.
+CONVOLUTION_NARROW = 1e-12
+
+
+def _real_array(name: str, value: ArrayLike) -> np.ndarray:
+    """The value as an array of floats without NaN, or a ValueError that names the argument."""
+    try:
+        raw = np.asarray(value)
+        items = np.asarray(value, dtype=object).ravel()   # the items as they were typed
+        refused = raw.dtype.kind in "bcUSMm" or any(      # booleans, complex numbers, text, dates
+            isinstance(item, (bool, np.bool_, str, bytes)) for item in items)
+        points = None if refused else raw.astype(float)
+    except (TypeError, ValueError, OverflowError):        # None, a ragged list, 10 ** 400, a SymPy letter
+        refused = True
+    if refused or bool(np.isnan(points).any()):
+        raise ValueError(f"{name} must be a real number, a list or an array of real numbers, got {value!r}")
+    return points
+
+
+def step(t: ArrayLike, a: float = STEP_START) -> np.ndarray:
+    """Lebl's unit step (Heaviside) function u(t - a): 0 for t < a and 1 for t >= a.
+
+    Lebl, Example 6.1.4 and Section 6.2 ("Using the Heaviside function"), used in notebook 20. It is a
+    switch that closes at the time a: f(t) * step(t, a) is f from the time a on and 0 before, and
+    step(t, a) - step(t, b) is 1 for a <= t < b and 0 elsewhere (a window). ``step(t)`` is u(t). The
+    value at the jump itself is 1, as Lebl defines it; the transform e^(-as)/s and every solution are the
+    same with any other value there. t is a number, a list or an array (in seconds, say), a is one
+    number in the same unit, and the result is an array of 0.0 and 1.0 with the shape of t (for a single
+    number, an array with no axes: it can be used as a number). The letter u is Lebl's: it is not the
+    u_1, u_2 of variation of parameters. ValueError: a that is not one finite real number; t that is
+    not made of real numbers (text, a boolean, a complex number, NaN, or a SymPy letter: in a formula
+    typed with SymPy the step is sp.Heaviside, which notebook 20 calls u; a SymPy number such as sp.pi
+    is a number).
+    """
+    start = _one_real_number("a", a)
+    if type(t).__module__.startswith("sympy") and getattr(t, "free_symbols", True):
+        raise ValueError("ol.step works with numbers: in a formula typed with SymPy write u(t - 2), the step "
+                         f"of notebook 20 (it is sp.Heaviside), got {t!r}")
+    return np.where(_real_array("t", t) >= start, 1.0, 0.0)
+
+
+def convolution(f: Callable[[float], float], g: Callable[[float], float], t: ArrayLike, *,
+                breaks: Sequence[float] = ()) -> np.ndarray:
+    """The convolution (f * g)(t): the integral from 0 to t of f(tau) g(t - tau) d tau.
+
+    Lebl, Section 6.3.1, formula (6.3.1), used in notebook 20. f and g are functions of one number
+    (the time, 0 or more) that return one real number; t is a number, a list or an array of times, each
+    0 or more; the result is an array with the shape of t (for a single number, an array with no axes),
+    and (f * g)(0) = 0: at t = 0 the result is 0 and f and g are not evaluated. The star is not a
+    product: for f = g = 1 it gives t, not 1. Units: with t in seconds, the result is in the units of f
+    times the units of g times seconds. ``breaks`` are the times at which f or g jumps (a switch, the
+    ends of a pulse): give them, and the integral is cut at tau = break (for f) and at tau = t - break
+    (for g).
+
+    How it is computed, for each t: by ``scipy.integrate.quad`` on equal pieces of [0, t], cut also at
+    the breaks and at the jumps that a first look at f and g finds by itself (CONVOLUTION_SCAN equal
+    steps of [0, t]; cuts nearer than CONVOLUTION_NARROW t are one cut). The sum is computed twice,
+    with different pieces (CONVOLUTION_PIECES), and it is accepted when quad is in doubt on no piece and
+    the two sums and quad's own error estimates agree to CONVOLUTION_RTOL max(1, |value|), the rule of
+    ``check``. Otherwise a ValueError says so: that is the safe answer.
+
+    What is promised, and what is not (measured; "about"):
+      * The accuracy is absolute below 1 and relative above: about 1e-8 max(1, |(f * g)(t)|)
+        (CONVOLUTION_RTOL). So it depends on the units chosen for f and g: a result near 0 that is
+        made of pieces of size 1e6 (1e6 cos t against 1, at t = 2 pi) cannot reach it and is refused.
+      * The search for switches is a help, not a guarantee. A switch or a pulse that is not named in
+        ``breaks`` is looked for, and it is found by the first look when it lasts longer than one
+        step of that look, t / 256 (CONVOLUTION_SCAN), AND its jump is more than 8 times
+        (CONVOLUTION_JUMP_RATIO) what the function changes over a step around it, as it is for a pulse
+        on 0 or on a constant. Otherwise the answer is a ValueError or, when both sums miss it, a
+        wrong number with no error, as if the pulse were not there. When f or g switches, name the
+        times in ``breaks``.
+      * f and g must be finite numbers at every time from 0 to t, the ends included: 1 / sqrt(t) is
+        refused, although its convolutions exist. (A function that is not finite only on an interval
+        shorter than a step of the first look can pass unseen, as a short pulse can.)
+      * Each t costs about 450 evaluations of f and of g for smooth functions and about 700 to 900
+        with one or two jumps: use it on tens of times, not on thousands. It is a numerical
+        integral, slower and less exact than a formula.
+
+    What the search misses (measured on seeded pulses):
+      * A shorter pulse (0.01 wide when t = 10). On 0: all right from t / 256 up, one in ten wrong at
+        t / 300, about half at t / 500, seven in ten at t / 1000.
+      * A low pulse, up to about t / 100 wide, on a function that is itself changing (10 sin t plus a
+        pulse of height 1.5 and width 0.05, when t = 10; a pulse of height 0.5 and width 0.1 on
+        sin 2t, when t = 20): it is not seen when its height is less than about 8 times the change of
+        the function over one step of the first look. On a ramp, a sine or an exponential: about half
+        wrong at t / 250, one in eight at t / 128, a few in a hundred at t / 100.
+      * A switch that closes steeply without a jump (a ramp from 0 to 1 that lasts 0.0003, when
+        t = 50): a few in a hundred wrong when the ramp lasts a hundredth of a step of the first
+        look, about one in three at a thousandth.
+    With the times named in ``breaks`` all of these are computed.
+
+    ValueError, with one sentence: f or g that is not a function, that does not take one number, that
+    returns something that is not one finite real number, or that stops with an error of its own (the
+    sentence quotes it); t that is not made of finite real numbers, or a negative t; breaks that are
+    not finite times >= 0; a product f(tau) g(t - tau) too large for the computer; an integral on
+    which the two computations do not agree. SciPy is imported here, not at the top: the rest of odelib
+    needs NumPy only.
+    """
+    import math
+
+    from scipy.integrate import quad
+
+    for name, function in (("f", f), ("g", g)):
+        if not callable(function):
+            raise ValueError(f"{name} must be a function of one number, for example lambda t: np.exp(-2 * t)")
+    points = _real_array("t", t)
+    if not bool(np.all(np.isfinite(points) & (points >= 0))):
+        raise ValueError(f"t must be made of finite times, each 0 or more (f and g are defined for "
+                         f"t >= 0 only), got {t!r}")
+    try:
+        jumps = [math.nan] if isinstance(breaks, (str, bytes)) else sorted(
+            {_one_real_number("a break", point) for point in breaks})
+    except (TypeError, ValueError, OverflowError):        # not a list, or a point that is not a number
+        jumps = [math.nan]
+    if not all(math.isfinite(point) and point >= 0 for point in jumps):
+        raise ValueError(f"breaks must be a list of finite times, each 0 or more, got {breaks!r}")
+    digits = round(-math.log10(CONVOLUTION_RTOL))
+    in_doubt = (f"the convolution could not be computed to {digits} digits: if f or g has a switch or a "
+                "short pulse, name the times at which it jumps in breaks=[...]; or f(tau) g(t - tau) is so "
+                f"much larger than the result that {digits} digits cannot be reached")
+
+    def value_of(function: Callable[[float], float], name: str, time: float) -> float:
+        """function(time) as a finite float, or a ValueError with the sentence for what went wrong."""
+        try:
+            raw = function(time)
+        except TypeError as problem:
+            hint = " (a power is written t ** 2, not t ^ 2)" if "^" in str(problem) else ""
+            raise ValueError(f"{name} must take one number and return one number ({problem}){hint}") from None
+        except Exception as problem:                      # whatever else it does: said in one sentence
+            raise ValueError(f"{name} stopped with an error at the time {time:.3g} "
+                             f"({type(problem).__name__}: {problem})") from None
+        try:
+            refused = isinstance(raw, (str, bytes)) or np.iscomplexobj(raw) or np.ndim(raw) != 0
+            value = math.nan if refused else float(raw)
+        except Exception:                                 # whatever float() raises for such a value
+            refused = True
+        if refused:
+            raise ValueError(f"{name} must return one real number, got {raw!r} at the time {time:.3g}")
+        if not math.isfinite(value):
+            raise ValueError(f"{name} is not a finite number at the time {time:.3g} (it gives {value!r}): "
+                             "the convolution needs f and g at every time from 0 to t")
+        return value
+
+    def seen_jumps(function: Callable[[float], float], name: str, end: float) -> set[float]:
+        """The times in (0, end) at which a look at the function on equal steps sees a jump."""
+        times = [end * index / CONVOLUTION_SCAN for index in range(CONVOLUTION_SCAN + 1)]
+        values = [value_of(function, name, time) for time in times]
+        changes = [abs(after - before) for before, after in zip(values[:-1], values[1:], strict=True)]
+        floor = CONVOLUTION_RTOL * max(abs(value) for value in values)
+        marked = []
+        for index, change in enumerate(changes):
+            around = sorted(changes[max(index - CONVOLUTION_WINDOW, 0):index]
+                            + changes[index + 1:index + 1 + CONVOLUTION_WINDOW])
+            typical = around[len(around) // 2]            # the median of the changes on the steps around
+            if change > CONVOLUTION_JUMP_RATIO * typical and change > floor:
+                marked.append(index)
+        found: set[float] = set()
+        if len(marked) <= CONVOLUTION_MAX_JUMPS:
+            for index in marked:                          # halve the step: where is the function half way
+                low, high = times[index], times[index + 1]                # between its two sides?
+                below, above = values[index], values[index + 1]
+                middle = (low + high) / 2
+                while low < middle < high:
+                    between = value_of(function, name, middle)
+                    if abs(between - below) <= abs(between - above):
+                        low = middle
+                    else:
+                        high = middle
+                    middle = (low + high) / 2
+                # low and high are now neighboring numbers. The step is cut there and at its two ends, so
+                # that a switch that closes steeply without a jump lies in two pieces of its own.
+                found.update((times[index], high, times[index + 1]))
+        return found
+
+    def by_pieces(end: float, pieces: int, cuts: set[float]) -> tuple[float, float]:
+        """The sum of the integrals over the pieces of [0, end] and of the errors that quad estimates."""
+        edges = [0.0]
+        for edge in sorted(cuts | {end * index / pieces for index in range(1, pieces)}):
+            if min(edge - edges[-1], end - edge) > CONVOLUTION_NARROW * end:
+                edges.append(edge)                        # (a cut next to another one is left out)
+        edges.append(end)
+        share = CONVOLUTION_RTOL / (len(edges) - 1)
+        total = error = 0.0
+        for left, right in zip(edges[:-1], edges[1:], strict=True):
+            part, estimate, _, *doubt = quad(
+                lambda tau: value_of(f, "f", tau) * value_of(g, "g", end - tau), left, right,
+                epsabs=share, epsrel=share, limit=QUAD_LIMIT, full_output=True)
+            if doubt:                                     # quad adds a message when it is in doubt
+                raise ValueError(in_doubt)
+            total += part
+            error += estimate
+        return total, error
+
+    def at(end: float) -> float:
+        """(f * g)(end) for one time end >= 0."""
+        if end == 0:
+            return 0.0
+        of_f = set(jumps) | seen_jumps(f, "f", end)       # f jumps at tau = these times
+        of_g = set(jumps) | seen_jumps(g, "g", end)       # g(end - tau) jumps where end - tau = these times
+        cuts = {time for time in of_f | {end - time for time in of_g} if 0.0 < time < end}
+        (value, estimate), (other, other_estimate) = (by_pieces(end, pieces, cuts)
+                                                      for pieces in CONVOLUTION_PIECES)
+        if not (math.isfinite(value) and math.isfinite(other)):
+            raise ValueError(f"f(tau) g(t - tau) is too large for the computer between 0 and t = {end:.3g}")
+        if not max(estimate, other_estimate, abs(value - other)) <= CONVOLUTION_RTOL * max(1.0, abs(value)):
+            raise ValueError(in_doubt)
+        return value
+
+    with np.errstate(all="ignore"):
+        values = np.array([at(float(end)) for end in points.ravel()], dtype=float)
+    return values.reshape(points.shape)
+
+
+def impulse_response(t: ArrayLike, a: float, b: float, c: float) -> np.ndarray:
+    """The impulse response of a y'' + b y' + c y: the solution of a y'' + b y' + c y = delta(t) from rest.
+
+    Lebl, Section 6.4.3 and Example 6.4.2 (x'' + omega_0^2 x = delta(t) gives sin(omega_0 t) / omega_0),
+    used in notebook 20. The system is at rest before the blow, y = 0 for t < 0; the unit impulse at
+    t = 0 changes the velocity at once from 0 to 1 / a and the position not at all, so for t >= 0 the
+    result is the free motion with y(0) = 0 and y'(0) = 1 / a. That motion is computed by
+    ``constant_coefficient_solution``: nothing is solved again here. Its transform is the transfer
+    function H(s) = 1 / (a s^2 + b s + c) (Lebl, Section 6.2), and the solution from rest for any input
+    f is the convolution of f with this function: ``convolution(f, lambda t: impulse_response(t, a, b,
+    c), t)`` equals ``forced_response(t, a, b, c, f)``. Units, for a mass a in kg, a damper b in N s/m
+    and a spring c in N/m, with t in seconds: meters for each newton second of impulse; a blow of
+    impulse P gives P times this function. t is a number, a list or an array, and the result is an
+    array with the shape of t (for a single number, an array with no axes). ValueError: a = 0 (the
+    equation must be of second order); a, b or c that is not one finite real number; t that is not made
+    of finite real numbers; times so large that the response is not a number of the computer.
+    """
+    a, b, c = _one_real_number("a", a), _one_real_number("b", b), _one_real_number("c", c)
+    if a == 0:
+        raise ValueError("a must be nonzero: the equation must be of second order")
+    points = _real_array("t", t)
+    if not bool(np.all(np.isfinite(points))):
+        raise ValueError(f"t must be made of finite times, got {t!r}")
+    with np.errstate(over="ignore", invalid="ignore"):
+        after = constant_coefficient_solution(np.maximum(points, 0.0), a, b, c, 0.0, 1.0 / a)
+    if not bool(np.all(np.isfinite(after))):
+        raise ValueError("the impulse response is too large for the computer at these times, or a is too "
+                         "near to 0: use times closer to 0")
+    return np.where(points >= 0, after, 0.0)
 
 
 # ---------------------------------------------------------------------------

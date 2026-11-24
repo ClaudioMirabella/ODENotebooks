@@ -2119,3 +2119,745 @@ def test_laplace_numeric_leaves_the_warning_filters_and_the_numpy_settings_as_th
 def test_laplace_table_refuses_invalid_constants(arguments, words):
     with pytest.raises(ValueError, match=words):
         ol.laplace_table(**arguments)
+
+
+# --- steps, impulses and convolution (notebook 20; Lebl, Sections 6.2 to 6.4) ------------------------
+SWITCH_TIMES = (0.0, 0.5, 1.0, 2.5)         # the times a at which a step switches on
+CONV_TIMES = np.linspace(0.0, 6.0, 13)      # where a convolution is compared with a formula
+CONV_OMEGAS = (0.5, 1.0, 2.0, 7.0)          # the omega of Lebl's Examples 6.3.2 and 6.3.4
+CONV_DRAWS = 12                             # seeded random cases per test
+TRANSFER_DRAWS = 4                          # for the transfer function (the hammer and dsolve test it too)
+EXACT = 1e-12                               # two formulas that agree to rounding (relative)
+CONV_PULSES = 60                            # seeded pulses that convolution must find by itself
+CONV_PULSE_RATIO = (0.005, 0.2)             # their width, as a part of t (the docstring promises t / 256)
+ROCKET_ON, ROCKET_OFF = 1.0, 5.0            # Lebl, Example 6.2.2: the rocket fires for 1 <= t < 5
+ROCKET_TIMES = np.linspace(0.0, 12.0, 25)
+HAMMER = (1.0, 2.0, 5.0)                    # notebook 20: m = 1 kg, c = 2 kg/s, k = 5 N/m
+HAMMER_IMPULSE = 3.0                        # newton seconds
+SHORT_PULSE = 1e-4                          # seconds: a pulse this short stands for a blow in solve_ivp
+SHORT_PULSE_AGREEMENT = 1e-3                # the response to it against the impulse response
+FORCED_AGREEMENT = 1e-7                     # forced_response (one quad at its default tolerance)
+DIFFERENCE_STEP = 1e-6                      # the step of a difference quotient
+DIFFERENCE_AGREEMENT = 1e-4                 # a difference quotient against the derivative (relative)
+IVP_TIGHT = {"rtol": 1e-11, "atol": 1e-13}  # solve_ivp, as TIGHT in test_cross_validation.py
+IVP_AGREEMENT = 1e-8                        # solve_ivp at these tolerances against a formula
+ROUNDING = 1e-15                            # two ways of writing one function by cases
+UNSEEN = 1e-6                               # a pulse that was not seen leaves less than this
+ANY_EQUATION = ((0.5, 4.0), (-1.0, 4.0), (-2.0, 9.0))      # ranges in which a, b, c are drawn
+DAMPED_EQUATION = ((0.5, 4.0), (0.5, 4.0), (1.0, 9.0))     # the same for a damped spring (b, c > 0)
+S_DRAWN = (0.5, 4.0)                        # the range in which s is drawn
+DELAY_DRAWN = (0.2, 3.0)                    # the range in which a delay is drawn
+RATE_DRAWN = (-1.0, 2.0)                    # the rates p of e^(-pt)
+OMEGA_DRAWN = (0.3, 6.0)                    # angular frequencies
+FACTOR_DRAWN = (-3.0, 3.0)                  # the constant c of (c f) * g
+END_DRAWN = (1.0, 20.0)                     # the time t of a convolution with a pulse
+DURATIONS = (0.5, 2.0, 4.0, 2 * np.pi, 8.0)                # seconds for which the rocket fires
+
+
+def drawn(rng, ranges):
+    """One number from each range (low, high), from the seeded generator."""
+    return [rng.uniform(low, high) for low, high in ranges]
+
+
+def near(found, exact, rtol=ol.CONVOLUTION_RTOL):
+    """True when found is as near to exact as convolution promises: rtol max(1, |exact|), at every point."""
+    found, exact = np.asarray(found, dtype=float), np.asarray(exact, dtype=float)
+    return bool(np.all(np.abs(found - exact) <= rtol * np.maximum(1.0, np.abs(exact))))
+
+
+def rocket_force(t):
+    return ol.step(t, ROCKET_ON) - ol.step(t, ROCKET_OFF)
+
+
+def rocket_solution(t):
+    # the answer printed in Example 6.2.2
+    return ((1 - np.cos(t - ROCKET_ON)) * ol.step(t, ROCKET_ON)
+            - (1 - np.cos(t - ROCKET_OFF)) * ol.step(t, ROCKET_OFF))
+
+
+def test_step_is_lebl_unit_step_with_the_value_1_at_the_jump():
+    # Example 6.1.4: u(t) = 0 if t < 0, 1 if t >= 0
+    assert ol.step([-2.0, -1e-300, 0.0, 1e-300, 3.0]).tolist() == [0.0, 0.0, 1.0, 1.0, 1.0]
+    assert ol.STEP_START == 0.0
+    for a in SWITCH_TIMES:
+        before, after = np.nextafter(a, -np.inf), np.nextafter(a, np.inf)
+        assert ol.step([before, a, after], a).tolist() == [0.0, 1.0, 1.0]
+    assert ol.step(-0.0) == 1.0 and ol.step(0.0, -0.0) == 1.0          # the two zeros of the computer
+    assert ol.step(np.inf) == 1.0 and ol.step(-np.inf) == 0.0
+    assert ol.step(2, 3) == 0.0 and ol.step(np.int64(3), np.float32(3)) == 1.0
+
+
+def test_step_shape_and_type_of_the_result():
+    one = ol.step(2.0, 1.0)
+    assert isinstance(one, np.ndarray) and one.shape == () and one.dtype == float and float(one) == 1.0
+    grid = ol.step([[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]], 2.0)
+    assert grid.shape == (2, 3) and grid.dtype == float
+    assert grid.tolist() == [[0.0, 0.0, 1.0], [1.0, 1.0, 1.0]]
+    assert ol.step(np.array([]), 1.0).shape == (0,)
+
+
+def test_step_builds_the_functions_of_lebl_section_6_2():
+    times = np.linspace(-1.0, 4.0, 501)
+    # the window u(t - 1) - u(t - 2) is 1 on [1, 2) and 0 elsewhere
+    window = ol.step(times, 1) - ol.step(times, 2)
+    assert np.array_equal(window, np.where((times >= 1) & (times < 2), 1.0, 0.0))
+    # the signal u(t - pi) sin t
+    signal = ol.step(times, np.pi) * np.sin(times)
+    assert np.array_equal(signal, np.where(times >= np.pi, np.sin(times), 0.0))
+    # t on [0, 1], -t + 2 on [1, 2), 0 otherwise
+    tent = (times * (ol.step(times) - ol.step(times, 1))
+            + (-times + 2) * (ol.step(times, 1) - ol.step(times, 2)))
+    by_cases = np.select([times < 0, times < 1, times < 2], [0.0, times, 2 - times], 0.0)
+    assert tent == pytest.approx(by_cases, abs=ROUNDING)
+    # Exercise 6.2.13 (answer printed): 0 for t < 1, t - 1 for 1 <= t < 2, 1 for 2 <= t
+    printed = (times - 1) * (ol.step(times, 1) - ol.step(times, 2)) + ol.step(times, 2)
+    assert printed == pytest.approx(np.select([times < 1, times < 2], [0.0, times - 1], 1.0), abs=ROUNDING)
+
+
+@pytest.mark.parametrize("a", [0.5, 1.0, 2.5])
+def test_the_transform_of_a_step_is_lebl_example_6_1_4(a):
+    for s in LAPLACE_S:
+        exact = np.exp(-a * s) / s                          # e^(-as)/s
+        assert promised(ol.laplace_numeric(lambda t: ol.step(t, a), s, breaks=[a]), exact, s)
+        if a == SWITCH_TIMES[-1]:                           # found by itself: for one of the steps only
+            assert promised(ol.laplace_numeric(lambda t: ol.step(t, a), s), exact, s)
+
+
+def test_the_second_shifting_property_on_seeded_delays_and_rows_of_the_table():
+    # (6.2.2): L{f(t - a) u(t - a)} = e^(-as) L{f(t)}
+    rng = np.random.default_rng(SEED)
+    rows = {row.name: row for row in ol.laplace_table()}
+    for _ in range(CONV_DRAWS):
+        row = rows[str(rng.choice(["1", "t", "t^2", "e^(-at)", "sin", "cos"]))]
+        a, s = drawn(rng, (DELAY_DRAWN, S_DRAWN))
+
+        def delayed(t, row=row, a=a):
+            return row.time(max(t - a, 0.0)) * float(ol.step(t, a))
+
+        assert promised(ol.laplace_numeric(delayed, s, breaks=[a]), np.exp(-a * s) * row.transform(s), s)
+
+
+def test_t_times_a_step_is_not_a_delayed_t():
+    # notebook 20, Section 3: t u(t - 1) = ((t - 1) + 1) u(t - 1), so the transform is e^(-s) (1/s^2 + 1/s)
+    for s in LAPLACE_S:
+        found = ol.laplace_numeric(lambda t: t * float(ol.step(t, 1)), s, breaks=[1])
+        assert promised(found, np.exp(-s) * (1 / s ** 2 + 1 / s), s)
+        assert not promised(found, np.exp(-s) / s ** 2, s)              # the usual mistake
+
+
+def test_the_rocket_of_lebl_example_6_2_2():
+    # x'' + x = u(t - 1) - u(t - 5) from rest: x = (1 - cos(t - 1)) u(t - 1) - (1 - cos(t - 5)) u(t - 5)
+    printed = rocket_solution(ROCKET_TIMES)
+    by_convolution = ol.convolution(rocket_force, np.sin, ROCKET_TIMES, breaks=[ROCKET_ON, ROCKET_OFF])
+    assert near(by_convolution, printed)
+    assert near(ol.convolution(rocket_force, np.sin, ROCKET_TIMES), printed)            # no breaks given
+    assert near(ol.convolution(np.sin, rocket_force, ROCKET_TIMES), printed)            # g * f
+    by_parameters = ol.forced_response(ROCKET_TIMES, 1, 0, 1, lambda t: float(rocket_force(t)))
+    assert by_parameters == pytest.approx(printed, abs=FORCED_AGREEMENT)
+    for s in LAPLACE_S:                                     # X(s) = (e^(-s) - e^(-5s)) / (s (s^2 + 1))
+        exact = (np.exp(-ROCKET_ON * s) - np.exp(-ROCKET_OFF * s)) / (s * (s ** 2 + 1))
+        assert promised(ol.laplace_numeric(lambda t: float(rocket_solution(t)), s,
+                                           breaks=[ROCKET_ON, ROCKET_OFF]), exact, s)
+
+
+def test_the_rocket_against_solve_ivp_and_the_amplitude_after_it_stops():
+    from scipy.integrate import solve_ivp
+
+    # Exercise 6.2.10: fired from t = 1 for d seconds, the mass then oscillates with amplitude 2 |sin(d/2)|
+    for duration in DURATIONS:
+        off = ROCKET_ON + duration
+        state = np.zeros(2)
+        for start, end, force in ((0.0, ROCKET_ON, 0.0), (ROCKET_ON, off, 1.0)):
+            state = solve_ivp(lambda t, y, force=force: [y[1], force - y[0]], (start, end), state,
+                              **IVP_TIGHT).y[:, -1]
+        amplitude = float(np.hypot(*state))                 # afterwards x^2 + x'^2 stays as it is
+        assert amplitude == pytest.approx(2 * abs(np.sin(duration / 2)), abs=IVP_AGREEMENT)
+        after = off + np.linspace(0.0, 7.0, 15)
+        found = ol.convolution(lambda t, off=off: ol.step(t, ROCKET_ON) - ol.step(t, off), np.sin, after,
+                               breaks=[ROCKET_ON, off])
+        expected = state[0] * np.cos(after - off) + state[1] * np.sin(after - off)
+        assert found == pytest.approx(expected, abs=IVP_AGREEMENT)
+
+
+def test_convolution_lebl_examples_6_3_1_to_6_3_3():
+    times = CONV_TIMES
+    assert near(ol.convolution(np.exp, lambda t: t, times), np.exp(times) - times - 1)          # 6.3.1
+    for omega in CONV_OMEGAS:                                                                   # 6.3.2
+        found = ol.convolution(lambda t, w=omega: np.sin(w * t), lambda t, w=omega: np.cos(w * t), times)
+        assert near(found, times * np.sin(omega * times) / 2)
+    # 6.3.3: the inverse of 1/((s + 1) s^2) is t * e^(-t) = e^(-t) + t - 1
+    found = ol.convolution(lambda t: t, lambda t: np.exp(-t), times)
+    assert near(found, np.exp(-times) + times - 1)
+    for s in LAPLACE_S:
+        assert promised(ol.laplace_numeric(lambda t: np.exp(-t) + t - 1, s), 1 / ((s + 1) * s ** 2), s)
+
+
+def test_convolution_printed_answers_of_lebl_exercises_6_3_10_to_6_3_12_and_6_4_11():
+    times = CONV_TIMES
+    # 6.3.10: cos t * e^(-t) = (cos t + sin t - e^(-t)) / 2
+    assert near(ol.convolution(np.cos, lambda t: np.exp(-t), times),
+                (np.cos(times) + np.sin(times) - np.exp(-times)) / 2)
+    # 6.3.11: the inverse of 5/(s^4 + s^2) = 5 (1/s^2) (1/(s^2 + 1)) is 5 t * sin t = 5t - 5 sin t
+    assert near(ol.convolution(lambda t: 5 * t, np.sin, times), 5 * times - 5 * np.sin(times))
+    for s in LAPLACE_S:
+        assert promised(ol.laplace_numeric(lambda t: 5 * t - 5 * np.sin(t), s), 5 / (s ** 4 + s ** 2), s)
+    # 6.3.12: x'' + x = sin t from rest is sin t * sin t = (sin t - t cos t) / 2
+    answer = (np.sin(times) - times * np.cos(times)) / 2
+    assert near(ol.convolution(np.sin, np.sin, times), answer)
+    assert ol.forced_response(times, 1, 0, 1, np.sin) == pytest.approx(answer, abs=FORCED_AGREEMENT)
+    # 6.4.11: the impulse response cos t and the input sin t give cos * sin = (t / 2) sin t
+    assert near(ol.convolution(np.cos, np.sin, times), times * np.sin(times) / 2)
+
+
+def test_lebl_exercise_6_2_14_printed_answer_against_forced_response():
+    # x'' - x = (t^2 - 1) u(t - 1), x(0) = 1, x'(0) = 2:
+    # x = (2 e^(t - 1) - t^2 - 1) u(t - 1) - e^(-t) / 2 + 3 e^t / 2
+    times = np.linspace(0.0, 3.0, 13)
+    printed = ((2 * np.exp(times - 1) - times ** 2 - 1) * ol.step(times, 1)
+               - np.exp(-times) / 2 + 3 * np.exp(times) / 2)
+    found = ol.forced_response(times, 1, 0, -1, lambda t: (t ** 2 - 1) * float(ol.step(t, 1)), 1, 2)
+    assert found == pytest.approx(printed, rel=FORCED_AGREEMENT)
+    # the part from rest is the input convolved with the impulse response sinh t
+    from_rest = ol.convolution(lambda t: (t ** 2 - 1) * ol.step(t, 1),
+                               lambda t: ol.impulse_response(t, 1, 0, -1), times, breaks=[1])
+    assert near(from_rest, printed - ol.constant_coefficient_solution(times, 1, 0, -1, 1, 2))
+
+
+def test_impulse_response_lebl_example_6_4_2_and_exercise_6_4_9():
+    times = np.linspace(0.0, 8.0, 33)
+    for omega_0 in CONV_OMEGAS:                             # x'' + omega_0^2 x = delta(t)
+        expected = np.sin(omega_0 * times) / omega_0
+        assert ol.impulse_response(times, 1, 0, omega_0 ** 2) == pytest.approx(expected, rel=EXACT)
+    assert ol.impulse_response(times, 1, 0, 0) == pytest.approx(times, rel=EXACT)   # Exercise 6.4.9: x = t
+    # Exercise 6.4.2: x'' + 2x' + x = delta(t) has the double root -1: t e^(-t)
+    assert ol.impulse_response(times, 1, 2, 1) == pytest.approx(times * np.exp(-times), rel=EXACT)
+    # Exercise 6.4.10, x' + a x = delta(t), is of first order: not for this function
+    with pytest.raises(ValueError, match="a must be nonzero"):
+        ol.impulse_response(times, 0, 1, 2)
+
+
+def test_impulse_response_is_zero_before_the_blow_and_starts_with_velocity_1_over_a():
+    assert ol.impulse_response([-3.0, -1e-9, 0.0], *HAMMER).tolist() == [0.0, 0.0, 0.0]
+    rng = np.random.default_rng(SEED)
+    for _ in range(CONV_DRAWS):
+        a, b, c = drawn(rng, ANY_EQUATION)
+        slope = float(ol.impulse_response(DIFFERENCE_STEP, a, b, c)) / DIFFERENCE_STEP
+        assert slope == pytest.approx(1 / a, rel=DIFFERENCE_AGREEMENT)
+        times = rng.uniform(0.0, 3.0, 7)
+        assert ol.impulse_response(times, a, b, c) == pytest.approx(
+            ol.constant_coefficient_solution(times, a, b, c, 0.0, 1 / a), rel=EXACT)
+    one = ol.impulse_response(1.0, *HAMMER)
+    assert isinstance(one, np.ndarray) and one.shape == () and one.dtype == float
+    assert ol.impulse_response([[0.5, 1.0], [1.5, 2.0]], *HAMMER).shape == (2, 2)
+
+
+def test_the_hammer_of_notebook_20():
+    # x'' + 2x' + 5x = 3 delta(t) from rest: x = (3/2) e^(-t) sin 2t, the free motion with x(0) = 0, x'(0) = 3
+    times = np.linspace(0.0, 6.0, 25)
+    mass, damper, spring = HAMMER
+    printed = 3 / 2 * np.exp(-times) * np.sin(2 * times)
+    assert HAMMER_IMPULSE * ol.impulse_response(times, *HAMMER) == pytest.approx(printed, rel=EXACT)
+    by_velocity = ol.free_response(times, mass, damper, spring, 0.0, HAMMER_IMPULSE / mass)
+    assert by_velocity == pytest.approx(printed, rel=EXACT)
+    for s in LAPLACE_S:                                     # X(s) = 3 / (s^2 + 2s + 5)
+        found = ol.laplace_numeric(lambda t: HAMMER_IMPULSE * float(ol.impulse_response(t, *HAMMER)), s)
+        assert promised(found, 3 / (s ** 2 + 2 * s + 5), s)
+
+
+def test_impulse_response_is_the_limit_of_short_pulses_by_solve_ivp():
+    from scipy.integrate import solve_ivp
+
+    rng = np.random.default_rng(SEED)
+    for _ in range(CONV_DRAWS // 2):
+        a, b, c = drawn(rng, DAMPED_EQUATION)
+
+        def field(t, y, force, a=a, b=b, c=c):
+            return [y[1], (force - b * y[1] - c * y[0]) / a]
+
+        # a pulse of height 1 / SHORT_PULSE for SHORT_PULSE seconds (area 1), then nothing
+        end = solve_ivp(field, (0.0, SHORT_PULSE), [0.0, 0.0], args=(1 / SHORT_PULSE,), **IVP_TIGHT)
+        times = np.linspace(0.5, 5.0, 10)
+        later = solve_ivp(field, (SHORT_PULSE, times[-1]), end.y[:, -1], args=(0.0,), t_eval=times,
+                          **IVP_TIGHT)
+        assert later.y[0] == pytest.approx(ol.impulse_response(times, a, b, c), abs=SHORT_PULSE_AGREEMENT)
+
+
+def test_the_transform_of_the_impulse_response_is_the_transfer_function():
+    rng = np.random.default_rng(SEED)
+    for _ in range(TRANSFER_DRAWS):
+        a, b, c = drawn(rng, DAMPED_EQUATION)               # damped: the transform exists for s > 0
+        s = rng.uniform(*S_DRAWN)
+        found = ol.laplace_numeric(lambda t, a=a, b=b, c=c: float(ol.impulse_response(t, a, b, c)), s)
+        assert promised(found, 1 / (a * s ** 2 + b * s + c), s)
+
+
+def test_convolution_with_the_impulse_response_is_forced_response():
+    # Lebl, Section 6.4.3: the solution from rest for any input is its convolution with the impulse response
+    rng = np.random.default_rng(SEED)
+    times = np.linspace(0.0, 5.0, 6)
+    inputs = (np.cos, lambda t: np.exp(-t), lambda t: t ** 2, lambda t: 1.0, lambda t: np.sin(3 * t) + 2)
+    for index in range(CONV_DRAWS):
+        a, b, c = drawn(rng, ANY_EQUATION)
+        f = inputs[index % len(inputs)]
+        found = ol.convolution(f, lambda t, a=a, b=b, c=c: ol.impulse_response(t, a, b, c), times)
+        expected = ol.forced_response(times, a, b, c, f)
+        assert found == pytest.approx(expected, rel=FORCED_AGREEMENT, abs=FORCED_AGREEMENT)
+
+
+def test_convolution_resonance_of_lebl_example_6_3_4():
+    times = CONV_TIMES
+    for omega_0 in CONV_OMEGAS:                             # x'' + omega_0^2 x = cos(omega_0 t) from rest
+        found = ol.convolution(lambda t, w=omega_0: np.cos(w * t),
+                               lambda t, w=omega_0: ol.impulse_response(t, 1, 0, w ** 2), times)
+        assert near(found, times * np.sin(omega_0 * times) / (2 * omega_0))
+    assert ol.cosine_forced_response(times, 1, 0, 4, 1, 2) == pytest.approx(times * np.sin(2 * times) / 4)
+
+
+def test_convolution_properties_of_lebl_6_3_3():
+    rng = np.random.default_rng(SEED)
+    times = np.linspace(0.0, 4.0, 5)
+    for _ in range(CONV_DRAWS):
+        p, q, w, factor = drawn(rng, (RATE_DRAWN, RATE_DRAWN, OMEGA_DRAWN, FACTOR_DRAWN))
+
+        def f(t, p=p):
+            return np.exp(-p * t)
+
+        def g(t, q=q, w=w):
+            return np.exp(-q * t) * np.cos(w * t)
+
+        fg = ol.convolution(f, g, times)
+        assert near(ol.convolution(g, f, times), fg)                                    # f * g = g * f
+        assert near(ol.convolution(lambda t, k=factor: k * f(t), g, times), factor * fg)    # (c f) * g
+        assert near(ol.convolution(f, lambda t, k=factor: k * g(t), times), factor * fg)
+    # the star is not a product: 1 * 1 = t, and f * 1 is the integral of f from 0 to t
+    assert near(ol.convolution(lambda t: 1.0, lambda t: 1.0, times), times)
+    assert near(ol.convolution(np.cos, lambda t: 1.0, times), np.sin(times))
+
+
+def test_convolution_shape_and_type_of_the_result_and_the_time_0():
+    one = ol.convolution(np.exp, lambda t: t, 2.0)
+    assert isinstance(one, np.ndarray) and one.shape == () and one.dtype == float
+    assert float(one) == pytest.approx(np.exp(2.0) - 3.0)
+    grid = ol.convolution(lambda t: 1.0, lambda t: 1.0, [[0, 1], [2, 3]])
+    assert grid.shape == (2, 2) and grid.ravel() == pytest.approx([0.0, 1.0, 2.0, 3.0])
+    assert ol.convolution(np.exp, np.exp, 0.0) == 0.0
+    assert ol.convolution(np.exp, np.exp, [0, 0]).tolist() == [0, 0]
+    assert ol.convolution(np.exp, np.exp, np.array([])).shape == (0,)
+    mixed = ol.convolution(lambda t: np.float32(1.0), lambda t: np.array(2.0), np.int64(3))
+    assert float(mixed) == pytest.approx(6)
+    assert ol.CONVOLUTION_RTOL == 1e-8 and len(ol.CONVOLUTION_PIECES) == 2
+
+
+def test_convolution_with_jumps_with_and_without_breaks():
+    times = CONV_TIMES
+    # Exercise 6.3.1: t^2 * u(t - 1) = (t - 1)^3 / 3 for t >= 1, and 0 before
+    expected = np.where(times >= 1, (times - 1) ** 3 / 3, 0.0)
+    for breaks in ((), [1], [1.0, 1.0], (1, 4.5)):          # a break that is not a jump costs nothing
+        assert near(ol.convolution(lambda t: t ** 2, lambda t: ol.step(t, 1), times, breaks=breaks), expected)
+        assert near(ol.convolution(lambda t: ol.step(t, 1), lambda t: t ** 2, times, breaks=breaks), expected)
+    # two windows: the convolution is a tent, 0 until 2, up to 4 at t = 6, down to 0 at t = 10
+    long = ROCKET_TIMES
+    tent = np.clip(long - 2, 0, None) - 2 * np.clip(long - 6, 0, None) + np.clip(long - 10, 0, None)
+    assert near(ol.convolution(rocket_force, rocket_force, long), tent)
+    assert near(ol.convolution(rocket_force, rocket_force, long, breaks=[ROCKET_ON, ROCKET_OFF]), tent)
+    # a switch exactly at a time of t, and a jump on top of an oscillation
+    assert near(ol.convolution(lambda t: ol.step(t, 3), np.cos, [3.0, 4.0]), [0.0, np.sin(1.0)])
+    found = ol.convolution(lambda t: np.sin(40 * t) * ol.step(t, 2.5), lambda t: 1.0, times)
+    assert near(found, np.where(times >= 2.5, (np.cos(100) - np.cos(40 * times)) / 40, 0.0))
+
+
+def test_convolution_finds_pulses_wider_than_its_first_look_by_itself():
+    rng = np.random.default_rng(SEED)
+    for index in range(CONV_PULSES):
+        end = rng.uniform(*END_DRAWN)
+        width = end * rng.uniform(*CONV_PULSE_RATIO)
+        on = rng.uniform(0.0, end - width)
+        under = index % 2                                   # every second pulse stands on e^(-t)
+
+        def f(t, on=on, width=width, under=under):
+            return (ol.step(t, on) - ol.step(t, on + width)) / width + under * np.exp(-t)
+
+        # the pulse of area 1 against sin: (cos(end - on - width) - cos(end - on)) / width
+        exact = ((np.cos(end - on - width) - np.cos(end - on)) / width
+                 + under * (np.exp(-end) - np.cos(end) + np.sin(end)) / 2)
+        assert near(ol.convolution(f, np.sin, end), exact)
+        assert near(ol.convolution(np.sin, f, end), exact)
+
+
+def test_convolution_documented_limit_a_very_short_pulse_needs_breaks():
+    # a pulse 0.01 wide at t = 3 in a convolution up to t = 40: shorter than one step of the first look
+    # (40 / 256), it is missed and a wrong number comes back with no error. The docstring says so; if this
+    # test fails because convolution has become better, correct the docstring.
+    on, width, end = 3.0, 0.01, 40.0
+
+    def pulse(t):
+        return (ol.step(t, on) - ol.step(t, on + width)) / width
+
+    exact = (np.cos(end - on - width) - np.cos(end - on)) / width
+    assert abs(exact) > 0.5
+    assert near(ol.convolution(pulse, np.sin, end, breaks=[on, on + width]), exact)
+    assert width < end / ol.CONVOLUTION_SCAN
+    assert float(ol.convolution(pulse, np.sin, end)) == pytest.approx(0.0, abs=UNSEEN)      # not seen
+
+
+@pytest.mark.parametrize("arguments, words", [
+    ((3, np.sin, 1.0), "f must be a function of one number"),
+    ((np.sin, None, 1.0), "g must be a function of one number"),
+    ((np.sin, np.cos, -1.0), "each 0 or more"),
+    ((np.sin, np.cos, [1.0, -1e-9]), "each 0 or more"),
+    ((np.sin, np.cos, np.inf), "finite times"),
+    ((np.sin, np.cos, np.nan), "t must be a real number"),
+    ((np.sin, np.cos, "2"), "t must be a real number"),
+    ((np.sin, np.cos, None), "t must be a real number"),
+    ((np.sin, np.cos, True), "t must be a real number"),
+    ((np.sin, np.cos, 1 + 2j), "t must be a real number"),
+    ((lambda t, extra: t, np.cos, 1.0), "f must take one number and return one number"),
+    ((np.sin, lambda: 1.0, 1.0), "g must take one number and return one number"),
+    ((lambda t: t ^ 2, np.cos, 1.0), "a power is written"),
+    ((lambda t: "one", np.cos, 1.0), "f must return one real number"),
+    ((np.sin, lambda t: 1j * t, 1.0), "g must return one real number"),
+    ((np.sin, lambda t: [t, t], 1.0), "g must return one real number"),
+    ((lambda t: 1 / t, np.cos, 1.0), "f stopped with an error at the time 0 .ZeroDivisionError"),
+    ((np.sin, lambda t: np.log(t), 1.0), "g is not a finite number at the time 0"),
+    ((lambda t: np.nan, np.cos, 1.0), "f is not a finite number"),
+    ((np.sin, lambda t: {}["missing"], 1.0), "g stopped with an error at the time 0 .KeyError"),
+])
+def test_convolution_refuses_invalid_input(arguments, words):
+    with pytest.raises(ValueError, match=words):
+        ol.convolution(*arguments)
+
+
+@pytest.mark.parametrize("breaks", ["1", [-1.0], [np.nan], [np.inf], [None], 5, [True], ["1"], [1 + 0j]])
+def test_convolution_refuses_invalid_breaks(breaks):
+    with pytest.raises(ValueError, match="breaks must be a list of finite times"):
+        ol.convolution(np.sin, np.cos, 1.0, breaks=breaks)
+
+
+def test_convolution_says_when_it_is_in_doubt():
+    # sin(1/t) oscillates without end near t = 0: no 8 digits, and the answer is a sentence
+    with pytest.raises(ValueError, match="could not be computed to 8 digits"):
+        ol.convolution(lambda t: np.sin(1 / t) if t else 0.0, lambda t: 1.0, 1.0)
+
+
+def test_convolution_leaves_the_warning_filters_and_the_numpy_settings_as_they_were():
+    filters, settings = list(warnings.filters), np.geterr()
+    ol.convolution(np.exp, lambda t: t, 1.0)
+    with pytest.raises(ValueError):
+        ol.convolution(np.sin, lambda t: np.log(t), 1.0)
+    assert list(warnings.filters) == filters and np.geterr() == settings
+
+
+class FakeSymbol:
+    """Stands for a SymPy letter where SymPy is not installed: step only looks at the module of the type."""
+
+    __module__ = "sympy.core.symbol"
+
+
+@pytest.mark.parametrize("call, words", [
+    (lambda: ol.step(1.0, None), "a must be one finite real number"),
+    (lambda: ol.step(1.0, np.nan), "a must be one finite real number"),
+    (lambda: ol.step(1.0, np.inf), "a must be one finite real number"),
+    (lambda: ol.step(1.0, "1"), "a must be one finite real number"),
+    (lambda: ol.step(1.0, [1.0, 2.0]), "a must be one finite real number"),
+    (lambda: ol.step(1.0, 1j), "a must be one finite real number"),
+    (lambda: ol.step(1.0, True), "a must be one finite real number"),
+    (lambda: ol.step("now"), "t must be a real number"),
+    (lambda: ol.step(None), "t must be a real number"),
+    (lambda: ol.step([0.0, np.nan]), "t must be a real number"),
+    (lambda: ol.step(2j), "t must be a real number"),
+    (lambda: ol.step(True), "t must be a real number"),
+    (lambda: ol.step(FakeSymbol(), 1), "in a formula typed with SymPy write u"),
+    (lambda: ol.impulse_response(1.0, 0, 2, 5), "a must be nonzero"),
+    (lambda: ol.impulse_response(1.0, None, 2, 5), "a must be one finite real number"),
+    (lambda: ol.impulse_response(1.0, 1, "2", 5), "b must be one finite real number"),
+    (lambda: ol.impulse_response(1.0, 1, 2, np.nan), "c must be one finite real number"),
+    (lambda: ol.impulse_response(1.0, 1, 2, [5]), "c must be one finite real number"),
+    (lambda: ol.impulse_response(1.0, True, 2, 5), "a must be one finite real number"),
+    (lambda: ol.impulse_response(np.inf, 1, 2, 5), "t must be made of finite times"),
+    (lambda: ol.impulse_response("soon", 1, 2, 5), "t must be a real number"),
+    (lambda: ol.impulse_response([0.0, np.nan], 1, 2, 5), "t must be a real number"),
+    (lambda: ol.impulse_response(1e6, 1, -5, 1), "too large for the computer"),
+])
+def test_step_and_impulse_response_refuse_invalid_input(call, words):
+    with pytest.raises(ValueError, match=words):
+        call()
+
+
+def test_the_new_functions_do_not_change_the_names_of_the_setup_cell():
+    assert ol.SETUP_NAMES == ("np", "sp", "plt", "ol", "solve_ivp", "interact", "FloatSlider", "IntSlider")
+
+
+# --- corrections after the reviews of notebook 20 (2026-11-24): what would have caught the four bugs ---
+RAMP_START = 2.0                            # a switch that closes without a jump: a ramp from 0 to 1
+WIDE_RAMP = (0.5, 10.0)                     # (how long the ramp lasts, the time t): 12 steps of the look
+STEEP_RAMP = (0.0003, 50.0)                 # far shorter than a step of the first look (50 / 256)
+LOW_PULSES = {                              # a low pulse on a changing function: f, ends, t, exact value
+    "code review": (lambda t: np.sin(2 * t) + (0.5 if 3 <= t < 3.1 else 0.0), (3.0, 3.1), 20.0,
+                    (1 - np.cos(40.0)) / 2 + 0.5 * 0.1),
+    "mathematics review": (lambda t: 10 * np.sin(t) + (1.5 if 3.3377 <= t < 3.3877 else 0.0),
+                           (3.3377, 3.3877), 10.0, 10 * (1 - np.cos(10.0)) + 1.5 * 0.05),
+}
+SEEN_AT_ALL = 1e-3                          # a coarse distance: a result farther than this lost a whole pulse
+HUGE = 1e200                                # a finite number whose square is not one
+TOO_LARGE = 10 ** 400                       # a whole number that no float can hold
+
+
+def ramp(duration):
+    """A function that goes from 0 to 1 in a straight line, from RAMP_START, in the given time."""
+    return lambda t: min(max((t - RAMP_START) / duration, 0.0), 1.0)
+
+
+def one(t):
+    return 1.0
+
+
+def test_convolution_with_a_switch_that_closes_without_a_jump():
+    # against 1 the convolution of a ramp is its integral: t - RAMP_START - duration / 2 after the ramp
+    duration, end = WIDE_RAMP
+    assert near(ol.convolution(ramp(duration), one, end), end - RAMP_START - duration / 2)
+    assert near(ol.convolution(one, ramp(duration), end), end - RAMP_START - duration / 2)
+    duration, end = STEEP_RAMP
+    exact = end - RAMP_START - duration / 2
+    assert near(ol.convolution(ramp(duration), one, end, breaks=[RAMP_START, RAMP_START + duration]), exact)
+
+
+def test_convolution_documented_limit_a_very_steep_ramp_needs_breaks():
+    # The docstring: "a switch that closes steeply without a jump ... can be missed". Pinned here: a wrong
+    # number with no error. If this test fails because convolution has become better, correct the docstring.
+    duration, end = STEEP_RAMP
+    exact = end - RAMP_START - duration / 2
+    found = float(ol.convolution(ramp(duration), one, end))
+    assert not near(found, exact) and found == pytest.approx(exact, abs=SEEN_AT_ALL)
+
+
+@pytest.mark.parametrize("name", sorted(LOW_PULSES))
+def test_convolution_documented_limit_a_low_pulse_on_a_changing_function_needs_breaks(name):
+    # The two reproductions of the reviews. With the ends of the pulse in breaks the value is right; without
+    # them the pulse is lost, with no error (the docstring says so: the search is a help, not a guarantee).
+    f, ends, end, exact = LOW_PULSES[name]
+    assert near(ol.convolution(f, one, end, breaks=ends), exact)
+    assert near(ol.convolution(one, f, end, breaks=ends), exact)
+    lost = float(ol.convolution(f, one, end))
+    assert abs(lost - exact) > SEEN_AT_ALL          # if this fails, convolution has become better
+
+
+def test_convolution_with_a_step_that_has_another_value_at_the_jump():
+    # the value 1/2 at the jump (NumPy's and SymPy's own step), and a switch written t > 1: naming the
+    # jump in breaks must not make the function fail (two cuts that are neighboring numbers are one cut)
+    def half(t):
+        return np.heaviside(t - 1, 0.5)
+
+    def late(t):
+        return 1.0 if t > 1 else 0.0
+
+    assert near(ol.convolution(half, one, 3.0), 2.0)
+    assert near(ol.convolution(half, one, 3.0, breaks=[1]), 2.0)
+    assert near(ol.convolution(half, one, 2.0), 1.0)                # the jump on a point of the first look
+    assert near(ol.convolution(one, late, 2.0, breaks=[1]), 1.0)
+    assert near(ol.convolution(late, np.cos, [2.0, 3.0], breaks=[1, 1.0, 1 + 1e-15]), np.sin([1.0, 2.0]))
+    assert ol.CONVOLUTION_NARROW == 1e-12
+    assert ol.CONVOLUTION_JUMP_RATIO == ol.LAPLACE_JUMP_RATIO
+    assert ol.CONVOLUTION_MAX_JUMPS == ol.LAPLACE_MAX_JUMPS
+
+
+def test_convolution_refuses_a_product_too_large_for_the_computer():
+    with pytest.raises(ValueError, match="too large for the computer between 0 and t = 1"):
+        ol.convolution(lambda t: HUGE, lambda t: HUGE, 1.0)         # f and g are finite, their product is not
+    # large values with a small result: refused, with a sentence that says why
+    with pytest.raises(ValueError, match="so much larger than the result"):
+        ol.convolution(lambda t: 1e6 * np.cos(t), one, 2 * np.pi)
+
+
+def test_convolution_at_the_time_0_does_not_look_at_f_and_g():
+    assert float(ol.convolution(lambda t: 1 / t, one, 0)) == 0.0    # as the docstring says
+    assert ol.convolution(lambda t: 1 / t, lambda t: {}["missing"], [0.0, 0]).tolist() == [0.0, 0.0]
+
+
+@pytest.mark.parametrize("call, words", [
+    (lambda: ol.step(TOO_LARGE), "t must be a real number"),
+    (lambda: ol.step([1, TOO_LARGE]), "t must be a real number"),
+    (lambda: ol.impulse_response(TOO_LARGE, 1, 2, 5), "t must be a real number"),
+    (lambda: ol.convolution(np.sin, np.cos, TOO_LARGE), "t must be a real number"),
+    (lambda: ol.convolution(lambda t: TOO_LARGE, np.cos, 1.0), "f must return one real number"),
+    (lambda: ol.convolution(np.sin, np.cos, 1.0, breaks=[TOO_LARGE]), "breaks must be a list of finite"),
+    (lambda: ol.convolution(lambda t: ol.step([t], 1), np.cos, 2.0), "f must return one real number"),
+    (lambda: ol.convolution(np.sin, lambda t: np.array([1.0]), 2.0), "g must return one real number"),
+    (lambda: ol.step([True, False]), "t must be a real number"),
+    (lambda: ol.step([1, True]), "t must be a real number"),
+    (lambda: ol.step([1.5, "2"]), "t must be a real number"),
+    (lambda: ol.step(np.array(["2026-11-24"], dtype="datetime64[D]")), "t must be a real number"),
+    (lambda: ol.impulse_response([1, True], 1, 2, 5), "t must be a real number"),
+    (lambda: ol.convolution(np.sin, np.cos, [1, True]), "t must be a real number"),
+    (lambda: ol.convolution(lambda t: BadFloat(), np.cos, 1.0), "f must return one real number"),
+    (lambda: ol.step(["1", "-2"]), "t must be a real number"),
+    (lambda: ol.step(np.array([1 + 0j])), "t must be a real number"),
+    (lambda: ol.impulse_response([True], 1, 2, 5), "t must be a real number"),
+    (lambda: ol.impulse_response(0.0, 5e-324, 1, 1), "or a is too near to 0"),
+])
+def test_the_new_functions_answer_with_a_valueerror_also_here(call, words):
+    with pytest.raises(ValueError, match=words):
+        call()
+
+
+class BadFloat:
+    """A value whose float() stops with an error that is not a TypeError, a ValueError or an OverflowError."""
+
+    def __float__(self):
+        raise RuntimeError("no number here")
+
+
+class FakeNumber:
+    """Stands for a SymPy number (sp.pi, sp.Integer(3)) where SymPy is not installed: no letter in it."""
+
+    __module__ = "sympy.core.numbers"
+    free_symbols = frozenset()
+
+    def __init__(self, value):
+        self.value = value
+
+    def __float__(self):
+        return float(self.value)
+
+
+def test_step_takes_a_sympy_number_as_a_number_and_other_kinds_of_numbers():
+    from decimal import Decimal
+    from fractions import Fraction
+
+    assert float(ol.step(FakeNumber(3), 2)) == 1.0 and float(ol.step(FakeNumber(1.5), 2)) == 0.0
+    assert ol.step([Fraction(1, 2), Decimal("1.5"), 2], 1).tolist() == [0.0, 1.0, 1.0]
+    assert ol.step(range(3), 1).tolist() == [0.0, 1.0, 1.0] and ol.step(np.uint8(3), 2) == 1.0
+
+
+# ---------------------------------------------------------------------------
+# The fix of 2026-11-24 (notebook 19's plan, Section 8): three refusals that were not needed
+# ---------------------------------------------------------------------------
+FIX_STEP_AT = 1.0                           # where the step of the first defect jumps
+FIX_S_VALUES = (0.5, 1.0, 2.0)
+FIX_RAMP_START = 2.0                        # the steep switch of the second defect begins here
+FIX_RAMP_WIDTHS = (0.3, 0.1, 0.03, 0.01, 0.003, 0.001, 0.0003)
+FIX_TOO_LARGE = 10 ** 400                   # an integer that float() cannot hold
+
+
+def half_value_step(t):
+    return float(np.heaviside(t - FIX_STEP_AT, 0.5))        # SymPy's Heaviside has this value at the jump
+
+
+@pytest.mark.parametrize("s", FIX_S_VALUES)
+def test_fix_laplace_numeric_takes_a_step_with_the_value_one_half_at_its_jump(s):
+    exact = math.exp(-FIX_STEP_AT * s) / s
+    assert promised(ol.laplace_numeric(half_value_step, s), exact, s)
+    assert promised(ol.laplace_numeric(half_value_step, s, breaks=[FIX_STEP_AT]), exact, s)
+    # the two other values at the jump were right before the fix and must stay so
+    for at_jump in (0.0, 1.0):
+        def other(t, at_jump=at_jump):
+            return float(np.heaviside(t - FIX_STEP_AT, at_jump))
+        assert promised(ol.laplace_numeric(other, s), exact, s)
+        assert promised(ol.laplace_numeric(other, s, breaks=[FIX_STEP_AT]), exact, s)
+
+
+def test_fix_laplace_numeric_takes_a_lambdified_sympy_heaviside():
+    sp = pytest.importorskip("sympy")
+    t = sp.symbols("t")
+    switched = sp.lambdify(t, sp.Heaviside(t - FIX_STEP_AT) * sp.exp(-t), "numpy")
+    for s in FIX_S_VALUES:
+        exact = math.exp(-FIX_STEP_AT * (s + 1)) / (s + 1)
+        assert promised(ol.laplace_numeric(lambda time: float(switched(time)), s), exact, s)
+
+
+@pytest.mark.parametrize("width", FIX_RAMP_WIDTHS)
+def test_fix_laplace_numeric_takes_a_steep_switch_without_a_jump(width):
+    def ramp(t):
+        return min(max((t - FIX_RAMP_START) / width, 0.0), 1.0)
+
+    for s in FIX_S_VALUES:
+        exact = (math.exp(-FIX_RAMP_START * s) - math.exp(-(FIX_RAMP_START + width) * s)) / (width * s * s)
+        ends = (FIX_RAMP_START, FIX_RAMP_START + width)
+        assert promised(ol.laplace_numeric(ramp, s, breaks=ends), exact, s)
+        try:                                                # without help: right, or the safe refusal
+            found = ol.laplace_numeric(ramp, s)
+        except ValueError:
+            assert width < FIX_RAMP_WIDTHS[2], "a ramp this wide must be computed without breaks"
+        else:
+            assert promised(found, exact, s)
+
+
+def test_fix_a_number_too_large_for_a_float_is_refused_with_a_sentence():
+    refusal = "must be one finite real number"
+    with pytest.raises(ValueError, match=refusal):
+        ol.laplace_numeric(lambda t: 1.0, FIX_TOO_LARGE)
+    with pytest.raises(ValueError, match=refusal):
+        ol.laplace_numeric(lambda t: 1.0, 1.0, rtol=FIX_TOO_LARGE)
+    with pytest.raises(ValueError, match="breaks"):
+        ol.laplace_numeric(lambda t: 1.0, 1.0, breaks=[FIX_TOO_LARGE])
+    with pytest.raises(ValueError, match=refusal):
+        ol.laplace_table(a=FIX_TOO_LARGE)
+    with pytest.raises(ValueError, match=refusal):
+        ol.laplace_table(omega=FIX_TOO_LARGE)
+    with pytest.raises(ValueError, match=refusal):
+        ol.step(1.0, FIX_TOO_LARGE)
+    with pytest.raises(ValueError, match=refusal):
+        ol.impulse_response(1.0, FIX_TOO_LARGE, 1.0, 1.0)
+
+
+FIX_RAMP_CASES = 60                         # seeded ramps for the documented limit of steep switches
+FIX_RAMP_SHARE_SAFE = 1e-3                  # width / starting time at which laplace_numeric is not wrong
+FIX_RAMP_SHARE_STEEP = 1e-5                 # and one at which it can be: breaks are needed
+FIX_RAMP_WRONG_ALLOWED = 3                  # of FIX_RAMP_CASES at the safe width (measured: 3 in 1500)
+
+
+def test_fix_laplace_numeric_steep_switches_the_documented_limit():
+    rng = np.random.default_rng(SEED)
+    limits = ((FIX_RAMP_SHARE_SAFE, FIX_RAMP_WRONG_ALLOWED), (FIX_RAMP_SHARE_STEEP, FIX_RAMP_CASES))
+    for share, wrong_allowed in limits:
+        wrong = 0
+        for _ in range(FIX_RAMP_CASES):
+            start = 10 ** rng.uniform(-1, 1)
+            width = share * start
+            s = 10 ** rng.uniform(-0.7, 1.2)
+
+            def ramp(t, start=start, width=width):
+                return min(max((t - start) / width, 0.0), 1.0)
+
+            exact = (math.exp(-start * s) - math.exp(-(start + width) * s)) / (width * s * s)
+            assert promised(ol.laplace_numeric(ramp, s, breaks=(start, start + width)), exact, s)
+            try:
+                wrong += not promised(ol.laplace_numeric(ramp, s), exact, s)
+            except ValueError:
+                pass                                        # the safe refusal
+        assert wrong <= wrong_allowed, f"width / start {share:g}: {wrong} wrong without breaks"
+
+
+FIX_LAST_EDGE = 2.0 ** 20                   # the last edge of the pieces for |s| at most 1 (LAPLACE_EDGES)
+FIX_SMALL_S = 3e-6
+FIX_SWITCH_OFF = FIX_LAST_EDGE - 513        # f is switched off shortly before that edge
+
+
+def test_fix_a_break_next_to_the_last_edge_does_not_replace_the_cut_before_it():
+    # the review of the fix: a named break one rounding step below the last edge took the place of the
+    # cut that had been found at the switch, and a wrong number came back with no error
+    def switched_off(t):
+        return 1.0 if t < FIX_SWITCH_OFF else 0.0
+
+    exact = (1 - math.exp(-FIX_SMALL_S * FIX_SWITCH_OFF)) / FIX_SMALL_S
+    for breaks in ((), [math.nextafter(FIX_LAST_EDGE, 0.0)], [FIX_SWITCH_OFF]):
+        assert promised(ol.laplace_numeric(switched_off, FIX_SMALL_S, breaks=breaks), exact, FIX_SMALL_S)
+
+
+def test_fix_breaks_at_or_next_to_a_cut_that_is_found_anyway():
+    exact = math.exp(-FIX_STEP_AT) / 1.0
+    near = (math.nextafter(FIX_STEP_AT, 0.0), math.nextafter(FIX_STEP_AT, 2.0))
+    for breaks in ([near[0]], [near[1]], list(near), [FIX_STEP_AT, near[1]], [0.5, FIX_STEP_AT, 2.0]):
+        for at_jump in (0.0, 0.5, 1.0):
+            def stepped(t, at_jump=at_jump):
+                return float(np.heaviside(t - FIX_STEP_AT, at_jump))
+            assert promised(ol.laplace_numeric(stepped, 1.0, breaks=breaks), exact, 1.0)
+
+
+def test_fix_a_square_wave_with_its_switches_named():
+    def wave(t):
+        return 1.0 if int(t) % 2 == 0 else 0.0              # 1 on [0, 1), 0 on [1, 2), and so on
+
+    for s in FIX_S_VALUES:
+        switches = range(1, 60)
+        exact = 1 / (s * (1 + math.exp(-s)))
+        assert promised(ol.laplace_numeric(wave, s, breaks=switches), exact, s)
