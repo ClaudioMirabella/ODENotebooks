@@ -64,6 +64,10 @@ Steps, impulses and convolution (notebook 20)
     step                          Lebl's unit step u(t - a): 0 before the time a, 1 from a on (Lebl 6.1, 6.2)
     convolution                   (f * g)(t), the integral of f(tau) g(t - tau) from 0 to t (Lebl 6.3)
     impulse_response              a y'' + b y' + c y = delta(t) from rest (Lebl 6.4)
+Series solutions (notebook 21)
+    series_coefficients           a_0, ..., a_(n-1) of a power series, from a recurrence (Lebl 7.2, 7.3)
+    series_value                  the partial sum of a power series at x, by Horner's rule (Lebl 7.1)
+    indicial_roots                the roots of r(r - 1) + p0 r + q0 = 0 and their case (Lebl 7.3)
 Exercises
     check                         compare an answer found by hand with the expected one
     check_formula                 the same for a formula typed as a SymPy expression
@@ -88,6 +92,8 @@ LAPLACE_GROWTH_TIMES, LAPLACE_SCAN, LAPLACE_JUMP_RATIO, LAPLACE_MAX_JUMPS, LAPLA
 LAPLACE_DEMO_A, LAPLACE_DEMO_OMEGA, LAPLACE_DEMO_N, LAPLACE_ROW_NAMES,
 STEP_START, CONVOLUTION_RTOL, CONVOLUTION_PIECES, CONVOLUTION_SCAN, CONVOLUTION_WINDOW,
 CONVOLUTION_JUMP_RATIO, CONVOLUTION_MAX_JUMPS, CONVOLUTION_NARROW,
+SERIES_CENTER, INDICIAL_NOT_INTEGER, INDICIAL_DOUBLE, INDICIAL_INTEGER, INDICIAL_COMPLEX,
+INDICIAL_TOLERANCE, INDICIAL_AMBIGUOUS,
 CHECK_TOLERANCE, ROUNDED, FORMULA_SAMPLES,
 RESIDUAL_ROUNDING, PORTRAIT_WORDS, STABILITY_WORDS, KIND_SYNONYMS; the guide and the hints:
 GUIDE_START, GUIDE_TYPING, GUIDE_TYPING_RULE, GUIDE_ERRORS, GUIDE_HOW, GUIDE_WORDS, GUIDE_TOPICS,
@@ -103,6 +109,7 @@ the points of a path after it has left the window of the picture).
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Iterator as _Iterator      # (notebook 21: a recurrence can loop over a)
 from types import MappingProxyType
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -2256,6 +2263,276 @@ def impulse_response(t: ArrayLike, a: float, b: float, c: float) -> np.ndarray:
         raise ValueError("the impulse response is too large for the computer at these times, or a is too "
                          "near to 0: use times closer to 0")
     return np.where(points >= 0, after, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Series solutions (notebook 21; Lebl, Sections 7.1 to 7.3)
+# ---------------------------------------------------------------------------
+# Conventions: x is the independent variable, as in Lebl's Chapter 7; a_k are the coefficients and k
+# their index; x0 is the center of the series; r is the exponent of the method of Frobenius,
+# y = x^r (a_0 + a_1 x + a_2 x^2 + ...), and p0, q0 are the two limits of a regular singular point.
+SERIES_CENTER = 0.0             # the default x0 of series_value: a series in powers of x
+# The four cases of the indicial equation r(r - 1) + p0 r + q0 = 0 (Lebl, Section 7.3.2, items iii to vi
+# of the list after Theorem 7.3.1), as indicial_roots names them:
+INDICIAL_NOT_INTEGER = "two real roots, difference not a whole number"
+INDICIAL_DOUBLE = "double root"
+INDICIAL_INTEGER = "two real roots, difference a whole number"
+INDICIAL_COMPLEX = "complex roots"
+# The roots differ by a whole number m (m = 0: a double root) when their squared difference,
+# (r1 - r2)^2 = (p0 - 1)^2 - 4 q0, is within INDICIAL_TOLERANCE max(1, (p0 - 1)^2 + 4 |q0|) of m^2: about
+# four digits above the rounding of the computer. The squares are compared, not the roots: the square root
+# would turn a rounding of 1e-16 in p0 or q0 into a gap of 1e-8 between the two roots of a double root.
+INDICIAL_TOLERANCE = 1e-12
+# The band INDICIAL_TOLERANCE max(1, ...) grows with the roots. When it reaches INDICIAL_AMBIGUOUS, a double
+# root (squared difference 0) and two roots 1 apart (squared difference 1) can no longer be told apart, and
+# indicial_roots refuses: this happens when (p0 - 1)^2 + 4|q0| reaches 2.5e11, for example for a double
+# root of size about 1.8e5.
+INDICIAL_AMBIGUOUS = 0.25
+
+
+class _UnknownCoefficient(Exception):
+    """Raised when a recurrence asks for a coefficient that series_coefficients does not know (yet)."""
+
+
+class _EarlierCoefficients:
+    """The coefficients a[0], ..., a[k - 1] as a recurrence sees them while a_k is computed.
+
+    A plain list would read a[-1] as its last item: a recurrence that reaches back further than the
+    initial values would then get a wrong number with no error. Here every index outside 0, ..., k - 1
+    is refused with a sentence. The known coefficients can be looped over (for v in a, sum(a),
+    np.array(a)) and sliced with ends 0 or more (a[:k], a[k - 2:k]).
+    """
+
+    def __init__(self, values: list[float]) -> None:
+        self._values = values
+        self.k = len(values)
+
+    def __len__(self) -> int:
+        return self.k
+
+    def __iter__(self) -> _Iterator[float]:
+        return iter(self._values[:self.k])                # a_0 to a_(k-1)
+
+    def __getitem__(self, index: int | slice) -> float | list[float]:
+        if isinstance(index, slice):                      # a[:k], a[k - 2:k]: a list of known coefficients
+            if any(end is not None and end < 0 for end in (index.start, index.stop)):
+                raise _UnknownCoefficient(f"the recurrence asked for a[{index.start}:{index.stop}] at k = "
+                                          f"{self.k}: a slice of a must start and stop at 0 or above (a "
+                                          "negative end is not counted from the end here)")
+            return self._values[:self.k][index]
+        if isinstance(index, (bool, np.bool_)) or not isinstance(index, (int, np.integer)):
+            raise _UnknownCoefficient(f"the recurrence asked for a[{index!r}] at k = {self.k}: an index of a "
+                                      "must be a whole number, such as k - 2")
+        if index < 0:
+            back = self.k - index                         # how many places back from a_k that is
+            raise _UnknownCoefficient(f"the recurrence asked for a[{index}] at k = {self.k}: there is no "
+                                      f"coefficient with a negative index (use a[k - {-index}], not "
+                                      f"a[{index}], for the coefficient {-index} place(s) back); if your "
+                                      f"rule reaches back {back} places, give at least {back} initial values")
+        if index >= self.k:
+            raise _UnknownCoefficient(f"the recurrence asked for a[{index}] at k = {self.k}: only a[0] to "
+                                      f"a[{self.k - 1}] are known when a_{self.k} is computed")
+        return self._values[index]
+
+
+def _next_coefficient(recurrence: Callable[[int, Sequence[float]], float], k: int,
+                      earlier: _EarlierCoefficients) -> float:
+    """recurrence(k, earlier) as a finite float, or a ValueError with one sentence that names k."""
+    try:
+        raw = recurrence(k, earlier)
+    except _UnknownCoefficient as problem:
+        raise ValueError(str(problem)) from None
+    except TypeError as problem:
+        hint = " (a power is written k ** 2, not k ^ 2)" if "^" in str(problem) else ""
+        if "positional argument" in str(problem):         # the function does not take (k, a)
+            raise ValueError(f"the recurrence stopped at k = {k} with a TypeError ({problem}): it must take "
+                             "two arguments, k and the list a of the earlier coefficients, and return one "
+                             f"number{hint}") from None
+        raise ValueError(f"the recurrence stopped with an error at k = {k} (TypeError: {problem}){hint}"
+                         ) from None
+    except ZeroDivisionError as problem:
+        raise ValueError(f"the recurrence stopped with an error at k = {k} (ZeroDivisionError: {problem}): a "
+                         "division by 0 (if you wrote a power with ^, write ** instead)") from None
+    except Exception as problem:                          # whatever else it does: said in one sentence
+        raise ValueError(f"the recurrence stopped with an error at k = {k} "
+                         f"({type(problem).__name__}: {problem})") from None
+    try:
+        refused = (isinstance(raw, (bool, np.bool_, str, bytes)) or np.iscomplexobj(raw)
+                   or np.ndim(raw) != 0)
+        value = float("nan") if refused else float(raw)
+    except Exception:                                     # whatever float() raises for such a value
+        refused = True
+    if refused:
+        raise ValueError(f"the recurrence must return one real number, got {raw!r} at k = {k}")
+    if not np.isfinite(value):
+        raise ValueError(f"the recurrence gives {value!r} at k = {k}, not a finite number (a division by 0?)")
+    return value
+
+
+def series_coefficients(recurrence: Callable[[int, Sequence[float]], float], initial: Sequence[float],
+                        n: int) -> np.ndarray:
+    """The first n coefficients a_0, ..., a_(n-1) of a power series, from the first ones and a recurrence.
+
+    Lebl, Section 7.2 (the recurrence relations of Examples 7.2.1 to 7.2.3) and Section 7.3 (Example 7.3.2,
+    with the exponent r inside the recurrence), used in notebook 21. ``initial`` gives the first
+    coefficients a_0, a_1, ...: the ones that the equation leaves free, and any that it fixes before the
+    recurrence starts (Airy's a_2 = 0). For every later k, ``recurrence(k, a)`` must return a_k, where
+    a[j] is the coefficient a_j found before, for 0 <= j < k; a can also be looped over (sum(a)) and sliced
+    with ends 0 or more (a[k - 2:k]), and len(a) is k. For y'' - y = 0 (Lebl, Example 7.2.1) the
+    rule is a_k = a_(k-2) / (k (k - 1)), and
+    ``series_coefficients(lambda k, a: a[k - 2] / (k * (k - 1)), [1, 0], 10)`` gives the coefficients of
+    cosh x. The result is an array of n floats; the coefficients that are 0 are counted too.
+
+    What is promised, and what is not:
+      * The numbers are those of the recurrence, in floating point. Nothing here checks that the recurrence
+        belongs to the equation: check the first coefficients by hand, or put the series in the equation.
+      * The coefficients say nothing about where the series converges, or how many terms are needed: see
+        series_value.
+      * a[j] for j outside 0, ..., k - 1 is refused, a negative j included (Python would read a[-1] as the
+        last coefficient, a wrong number with no error; write a[k - 1]): a recurrence that reaches back
+        3 places needs at least 3 initial values. A slice that runs past k is cut at k, as for a list.
+      * Real coefficients only: complex roots of the indicial equation (Lebl, Section 7.3.2, item vi of
+        the list after Theorem 7.3.1) are not handled.
+      * The recurrence is called once for each k from len(initial) to n - 1; n is at most MAX_STEPS.
+
+    ValueError, with one sentence: a recurrence that is not a function; initial that is not a list of
+    finite real numbers, at least one; n that is not a whole number (20, not 20.0) from len(initial) to
+    MAX_STEPS; a recurrence that asks for a coefficient that is not known, that stops with an error of its
+    own, or that returns something that is not one finite real number (each sentence names k: a division
+    by 0 at k = 2, for example).
+    """
+    if not callable(recurrence):
+        raise ValueError("recurrence must be a function of k and a, for example "
+                         "lambda k, a: a[k - 2] / (k * (k - 1))")
+    advice = f"initial must be a list of finite real numbers, a_0 first (at least one), got {initial!r}"
+    try:
+        start = _real_array("initial", initial)
+    except ValueError:
+        raise ValueError(advice) from None
+    if start.ndim != 1 or start.size == 0 or not bool(np.all(np.isfinite(start))):
+        raise ValueError(advice)
+    whole = isinstance(n, (int, np.integer)) and not isinstance(n, (bool, np.bool_))
+    if not whole or not start.size <= n <= MAX_STEPS:
+        raise ValueError(f"n, the number of coefficients, must be a whole number such as 20 (not 20.0), from "
+                         f"{start.size} (the number of initial values) to {MAX_STEPS}, got {n!r}")
+    values = [float(value) for value in start]
+    earlier = _EarlierCoefficients(values)
+    with np.errstate(all="ignore"):                       # a division by 0 is reported below, with its k
+        for k in range(start.size, int(n)):
+            earlier.k = k
+            values.append(_next_coefficient(recurrence, k, earlier))
+    return np.array(values, dtype=float)
+
+
+def series_value(coefficients: ArrayLike, x: ArrayLike, x0: float = SERIES_CENTER) -> np.ndarray:
+    """The partial sum a_0 + a_1 (x - x0) + a_2 (x - x0)^2 + ... + a_(n-1) (x - x0)^(n-1), at x.
+
+    Lebl, Section 7.1.1 (the partial sum of a power series), used in notebook 21. ``coefficients`` are
+    a_0, ..., a_(n-1), for example from ``series_coefficients``; x is a number, a list or an array, and x0
+    is the center. The sum is computed by Horner's rule, a_0 + h (a_1 + h (a_2 + ...)) with h = x - x0:
+    n - 1 multiplications and no powers. The result is an array with the shape of x (for a single number,
+    an array with no axes: it can be used as a number).
+
+    What is promised, and what is not:
+      * This is the value of a polynomial, not of the function that the whole series stands for. The two
+        agree only inside the radius of convergence, and only when enough terms are taken; outside the
+        radius more terms make the partial sum worse, not better (the series x - x^3/3 + x^5/5 - ... of
+        arctan x at x = 1.1: off by 0.17 with 10 terms that are not 0, by 13 with 40). Nothing here knows
+        the radius.
+      * Floating point: when the terms are much larger than their sum (an alternating series far from the
+        center), digits are lost by cancellation, whatever the number of terms. The series of the Bessel
+        function J_0 at x = 20 has terms as large as about 8e6 and the sum 0.167: no number of terms
+        brings it closer than about 1e-9 (with 30 terms that are not 0 it is off by about 1e-5: too few
+        terms). Compare with an independent value (scipy.special) when you can.
+
+    ValueError: coefficients that are not a list of finite real numbers, at least one; x that is not made
+    of finite real numbers; x0 that is not one finite real number; a partial sum that is too large for the
+    computer at one of the x.
+    """
+    advice = ("coefficients must be a list of finite real numbers, a_0 first (at least one), "
+              f"got {coefficients!r}")
+    try:
+        terms = _real_array("coefficients", coefficients)
+    except ValueError:
+        raise ValueError(advice) from None
+    if terms.ndim != 1 or terms.size == 0 or not bool(np.all(np.isfinite(terms))):
+        raise ValueError(advice)
+    points = _real_array("x", x)
+    if not bool(np.all(np.isfinite(points))):
+        raise ValueError(f"x must be made of finite real numbers, got {x!r}")
+    center = _one_real_number("x0", x0)
+    with np.errstate(over="ignore", invalid="ignore"):   # x - x0 itself may be too large: said below
+        h = points - center
+        total = np.full(h.shape, terms[-1])
+        for coefficient in terms[-2::-1]:                 # Horner: from the last coefficient to a_0
+            total = total * h + coefficient
+    if not bool(np.all(np.isfinite(total))):              # (an infinite h makes the sum infinite too)
+        raise ValueError("the partial sum is too large for the computer at some of these x: use x nearer "
+                         "to x0, or fewer coefficients")
+    return np.asarray(total, dtype=float).reshape(points.shape)
+
+
+def indicial_roots(p0: float, q0: float) -> tuple[float | complex, float | complex, str]:
+    """The two roots of the indicial equation r(r - 1) + p0 r + q0 = 0, and which of four cases they are.
+
+    Lebl, Section 7.3.2 (the method of Frobenius), used in notebook 21. For an equation
+    P(x) y'' + Q(x) y' + R(x) y = 0 with a regular singular point at x = 0, p0 and q0 are the two limits
+    of Lebl's definition, p0 = lim x Q(x) / P(x) and q0 = lim x^2 R(x) / P(x) as x -> 0; for the Euler
+    equation x^2 y'' + p0 x y' + q0 y = 0 they are its two coefficients. The result is (r1, r2, case):
+      * INDICIAL_NOT_INTEGER: two real roots whose difference is not a whole number, r1 > r2 (floats);
+      * INDICIAL_DOUBLE: one real root, twice: r1 = r2 (floats);
+      * INDICIAL_INTEGER: two real roots that differ by a whole number 1, 2, 3, ..., r1 > r2 (floats);
+      * INDICIAL_COMPLEX: r1 = alpha + i beta and r2 = alpha - i beta with beta > 0 (complex numbers).
+    These are the cases iii, iv, v and vi of the list after Lebl's Theorem 7.3.1: the case says what a
+    second solution looks like.
+
+    What is promised, and what is not:
+      * "A whole number" and "double" are decided with INDICIAL_TOLERANCE, on the squared difference
+        (r1 - r2)^2 = (p0 - 1)^2 - 4 q0, which the computer knows better than the difference itself. So p0
+        and q0 typed with decimals are read as meant (0.7 and 0.0225 give the double root 0.15 only up to
+        rounding). The price, for numbers p0 and q0 of size about 1: two roots closer than about 1e-6 are
+        called a double root, and a difference within about 5e-13 of a whole number is called that whole
+        number. These limits grow with the roots: two roots closer than about
+        1e-6 sqrt((p0 - 1)^2 + 4|q0|) are called a double root; for example 1000 and 1000.002 are
+        returned as the double root 1000.001. When (p0 - 1)^2 + 4|q0| reaches 2.5e11 (INDICIAL_AMBIGUOUS;
+        for example a double root of size about 1.8e5) the function refuses, since it could no longer tell
+        a double root from two roots 1 apart. Just below that limit the bands are wide: two roots up to
+        0.5 apart are called a double root (170000.4 and 170000), and a difference between about 0.87
+        and 1.12 is called 1.
+      * Nothing is checked about the equation: not that x = 0 is a regular singular point, not that p0 and
+        q0 are its limits.
+      * The roots are not the solutions: with a double root, or two roots that differ by a whole number, the
+        second solution may contain ln x (Lebl, items iv and v; in item v the term with ln x may also be
+        absent, as for every Euler equation).
+
+    ValueError: p0 or q0 that is not one finite real number, or so large that the roots are not numbers of
+    the computer, or that the case cannot be decided ((p0 - 1)^2 + 4|q0| of 2.5e11 and more).
+    """
+    p0, q0 = _one_real_number("p0", p0), _one_real_number("q0", q0)
+    middle = (1.0 - p0) / 2                               # r^2 - 2 middle r + q0 = 0: the mean of the roots
+    with np.errstate(over="ignore", invalid="ignore"):
+        squared = float(np.float64(1.0 - p0) ** 2 - 4 * np.float64(q0))          # (r1 - r2)^2
+        size = max(1.0, float(np.float64(1.0 - p0) ** 2 + 4 * abs(np.float64(q0))))
+    if not (np.isfinite(squared) and np.isfinite(size)):
+        raise ValueError(f"p0 = {p0!r} and q0 = {q0!r} are too large for the computer: the roots cannot be "
+                         "computed")
+    band = INDICIAL_TOLERANCE * size                      # how far squared may be from the truth
+    if band >= INDICIAL_AMBIGUOUS:
+        largest = abs(middle) + float(np.sqrt(abs(squared))) / 2      # the size of the larger root
+        raise ValueError(f"p0 = {p0!r} and q0 = {q0!r}: the roots, up to about {largest:.3g} in size, are "
+                         "too large for the computer to tell a double root from two roots 1 apart")
+    if abs(squared) <= band:
+        return middle, middle, INDICIAL_DOUBLE
+    half_gap = float(np.sqrt(abs(squared))) / 2           # |r1 - r2| / 2, or beta for complex roots
+    if squared < 0:
+        return complex(middle, half_gap), complex(middle, -half_gap), INDICIAL_COMPLEX
+    larger = middle + (half_gap if middle >= 0 else -half_gap)     # the root farther from 0: no cancellation
+    other = q0 / larger + 0.0                             # the product of the roots is q0 (+ 0.0: no -0.0)
+    r1, r2 = max(larger, other), min(larger, other)
+    whole = np.float64(round(2 * half_gap))               # the whole number nearest to r1 - r2
+    with np.errstate(over="ignore", invalid="ignore"):
+        integer = bool(abs(squared - whole ** 2) <= band)
+    return r1, r2, INDICIAL_INTEGER if integer else INDICIAL_NOT_INTEGER
 
 
 # ---------------------------------------------------------------------------

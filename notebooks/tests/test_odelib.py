@@ -2861,3 +2861,478 @@ def test_fix_a_square_wave_with_its_switches_named():
         switches = range(1, 60)
         exact = 1 / (s * (1 + math.exp(-s)))
         assert promised(ol.laplace_numeric(wave, s, breaks=switches), exact, s)
+
+
+# --- series solutions (notebook 21; Lebl, Sections 7.1 to 7.3) ------------------------------------------
+SERIES_POINTS = np.linspace(-2.0, 2.0, 17)  # where a partial sum is compared with a function
+SERIES_EXACT = 1e-14                        # a partial sum against a formula, well inside the radius
+SERIES_TERMS = 40                           # coefficients used for the functions of the notebook
+AIRY_POINTS = (1.0, 2.0, -3.0)              # notebook 21: Ai and Bi from the two series, 40 coefficients
+AIRY_AGREEMENT = 1e-12                      # plan 21: "to about 1e-12"
+BESSEL_POINTS = np.linspace(0.0, 10.0, 21)
+BESSEL_AGREEMENT = 1e-8                     # the J_0 of the notebook, 20 terms that are not 0, up to x = 10
+BESSEL_ORDERS = (0.0, 1.0, 1.0 / 3.0, 2.5)  # J_nu by its recurrence, against scipy.special.jv
+J0_TEN_TERMS = (10.0, -6.2176, 1e-4)        # x, the partial sum of 10 terms there, the digits of the text
+J0_ENOUGH, J0_TOO_FEW = 20, 19              # terms within BESSEL_AGREEMENT on [0, 10], and not
+ARCTAN_POINT_OUT, ARCTAN_POINT_IN = 1.1, 0.9
+ARCTAN_ERROR_10 = (0.17, 0.01)              # at x = 1.1, 10 terms: the docstring's number and its digits
+ARCTAN_ERROR_40 = (13.0, 0.5)               # at x = 1.1, 40 terms
+ARCTAN_TERMS_IN = (5, 10, 20, 40)           # at x = 0.9 the error shrinks with these numbers of terms
+J0_FAR = 20.0                               # where cancellation is measured
+J0_TRUNCATION_30 = (1.3e-5, 0.05)           # 30 terms at x = 20: the error and its relative digits
+J0_FLOOR = (1e-10, 1e-8)                    # 40, 60, 80 terms at x = 20: the error lies between these
+J0_FLOOR_TERMS = (40, 60, 80)
+J0_LARGEST_TERM = (7.6e6, 0.01)             # the largest term at x = 20, and its relative digits
+INDICIAL_SEED = 331                         # as SEED in test_cross_validation.py
+INDICIAL_DRAWS = 40                         # seeded pairs of roots, for each kind
+ROOT_RANGE = (-3.0, 3.0)                    # the roots drawn
+WHOLE_DIFFERENCES = (1, 2, 3, 5)            # whole-number differences drawn
+NOT_WHOLE_SHARE = (0.05, 0.95)              # a difference whole + this share is not a whole number
+BETA_RANGE = (0.05, 3.0)                    # the imaginary parts drawn
+ROOT_AGREEMENT = 1e-7                       # a seeded root against the root returned
+HORNER_RANGE = (-2.0, 2.0)                  # seeded coefficients and points of the Horner test
+HORNER_CENTERS = (-1.0, 1.0)
+HORNER_SIZES = (1, 12)                      # numbers of coefficients drawn (high excluded)
+HORNER_POINTS = 5
+HUGE_X = 1e308                              # x - x0 with x0 = -HUGE_X is too large for the computer
+LARGE_GAP = (-1999.002, 1000002.0)          # roots 1000.002 and 1000: called the double root 1000.001
+LARGE_DOUBLE = 1000.001
+AMBIGUOUS_SIDES = (1.5e5, 2.0e5)            # double roots of these sizes: computed, then refused
+RECHECK_BAND = (1000.0, (0.0027, 0.0028), (0.0029, 0.0035))     # near 1000: band 1e-6 sqrt(8e6) = 0.0028
+RECHECK_SYMMETRIC = 3e5                     # roots +-3e5: refused, with their size named
+RECHECK_COMPUTED = 4e5                      # roots 4e5 and 0: (p0 - 1)^2 + 4|q0| = 1.6e11, below 2.5e11
+RECHECK_WIDE = (170000.0, (0.4, 1.1))       # just below the limit: 0.4 apart is "double", 1.1 apart is "1"
+
+
+def cosh_rule(k, a):
+    return a[k - 2] / (k * (k - 1))         # Lebl, Example 7.2.1: y'' - y = 0
+
+
+def airy_rule(k, a):
+    return a[k - 3] / (k * (k - 1))         # Lebl, Example 7.2.2: y'' - x y = 0, with a_2 = 0 given
+
+
+def hermite_rule(n):
+    return lambda k, a: 2 * (k - 2 - n) / (k * (k - 1)) * a[k - 2]     # Lebl, Example 7.2.3
+
+
+def bessel_rule(nu):
+    # Bessel's equation of order nu with r = nu: ((k + nu)^2 - nu^2) a_k + a_(k-2) = 0
+    return lambda k, a: -a[k - 2] / (k * (k + 2 * nu))
+
+
+def test_series_example_7_2_1_cosh_and_sinh():
+    from math import factorial
+
+    even = ol.series_coefficients(cosh_rule, [1.0, 0.0], SERIES_TERMS)
+    odd = ol.series_coefficients(cosh_rule, [0.0, 1.0], SERIES_TERMS)
+    for k in range(SERIES_TERMS):
+        assert even[k] == pytest.approx(1 / factorial(k) if k % 2 == 0 else 0.0, rel=SERIES_EXACT, abs=0.0)
+        assert odd[k] == pytest.approx(1 / factorial(k) if k % 2 == 1 else 0.0, rel=SERIES_EXACT, abs=0.0)
+    assert ol.series_value(even, SERIES_POINTS) == pytest.approx(np.cosh(SERIES_POINTS), rel=SERIES_EXACT)
+    assert ol.series_value(odd, SERIES_POINTS) == pytest.approx(np.sinh(SERIES_POINTS), rel=SERIES_EXACT)
+    assert even.shape == (SERIES_TERMS,) and even.dtype == float
+
+
+def test_series_example_7_2_2_airy():
+    from scipy.special import airy
+
+    y1 = ol.series_coefficients(airy_rule, [1.0, 0.0, 0.0], SERIES_TERMS)
+    y2 = ol.series_coefficients(airy_rule, [0.0, 1.0, 0.0], SERIES_TERMS)
+    # Lebl, (7.2.6): y1 = 1 + x^3/6 + x^6/180 + ..., y2 = x + x^4/12 + x^7/504 + ...; a_(3n+2) = 0
+    assert y1[[0, 3, 6]] == pytest.approx([1.0, 1 / 6, 1 / 180])
+    assert y2[[1, 4, 7]] == pytest.approx([1.0, 1 / 12, 1 / 504])
+    assert not y1[2::3].any() and not y2[2::3].any()
+    ai0, ai0_prime, bi0, bi0_prime = airy(0.0)
+    for x in AIRY_POINTS:
+        ai, _, bi, _ = airy(x)
+        assert ai0 * ol.series_value(y1, x) + ai0_prime * ol.series_value(y2, x) == pytest.approx(
+            ai, abs=AIRY_AGREEMENT)
+        assert bi0 * ol.series_value(y1, x) + bi0_prime * ol.series_value(y2, x) == pytest.approx(
+            bi, rel=AIRY_AGREEMENT)
+
+
+def test_series_example_7_2_3_hermite():
+    # n = 3: the odd series stops, x - (2/3) x^3; n = 4: the even series stops, 1 - 4x^2 + (4/3) x^4 (Lebl)
+    odd = ol.series_coefficients(hermite_rule(3), [0.0, 1.0], SERIES_TERMS)
+    assert odd[:4] == pytest.approx([0.0, 1.0, 0.0, -2 / 3]) and not odd[4:].any()
+    even = ol.series_coefficients(hermite_rule(4), [1.0, 0.0], SERIES_TERMS)
+    assert even[:5] == pytest.approx([1.0, 0.0, -4.0, 0.0, 4 / 3]) and not even[5:].any()
+    # against NumPy's Hermite polynomials H_n (the same equation): equal up to a constant factor
+    for n in range(1, 8):
+        start = [1.0, 0.0] if n % 2 == 0 else [0.0, 1.0]
+        found = ol.series_coefficients(hermite_rule(n), start, n + 1)
+        power = np.polynomial.hermite.herm2poly([0.0] * n + [1.0])
+        assert found * power[n] / found[n] == pytest.approx(power, abs=SERIES_EXACT * abs(power).max())
+
+
+def test_series_example_7_3_2_with_r_inside_the_recurrence():
+    # 4x^2 y'' - 4x^2 y' + (1 - 2x) y = 0: r = 1/2, and the coefficients 1/k!: y = x^(1/2) e^x
+    from math import factorial
+
+    r = ol.indicial_roots(0.0, 0.25)[0]
+    found = ol.series_coefficients(
+        lambda k, a: (4 * (k + r - 1) + 2) / (4 * (k + r) * (k + r - 1) + 1) * a[k - 1], [1.0], SERIES_TERMS)
+    assert found == pytest.approx([1 / factorial(k) for k in range(SERIES_TERMS)], rel=SERIES_EXACT)
+    x = np.linspace(0.1, 2.0, 9)
+    assert x ** r * ol.series_value(found, x) == pytest.approx(np.sqrt(x) * np.exp(x), rel=SERIES_EXACT)
+
+
+@pytest.mark.parametrize("nu", BESSEL_ORDERS)
+def test_series_bessel_recurrence_against_scipy(nu):
+    from math import gamma
+
+    from scipy.special import jv
+
+    first = 1 / (2 ** nu * gamma(1 + nu))   # Lebl, (7.3.12): the a_0 of J_nu
+    found = ol.series_coefficients(bessel_rule(nu), [first, 0.0], SERIES_TERMS)
+    x = BESSEL_POINTS[1:]
+    assert x ** nu * ol.series_value(found, x) == pytest.approx(jv(nu, x), abs=BESSEL_AGREEMENT)
+
+
+def test_series_j0_the_numbers_of_notebook_21():
+    from scipy.special import jv
+
+    def terms(count):                       # count terms that are not 0: 2 count coefficients
+        return ol.series_coefficients(bessel_rule(0.0), [1.0, 0.0], 2 * count)
+
+    at, value, digits = J0_TEN_TERMS
+    assert float(ol.series_value(terms(10), at)) == pytest.approx(value, abs=digits)
+    assert float(ol.series_value(terms(J0_ENOUGH), at)) == pytest.approx(jv(0, at), abs=BESSEL_AGREEMENT)
+    errors = [np.abs(ol.series_value(terms(count), BESSEL_POINTS) - jv(0, BESSEL_POINTS)).max()
+              for count in (J0_ENOUGH, J0_TOO_FEW)]
+    assert errors[0] < BESSEL_AGREEMENT < errors[1]
+
+
+def test_series_value_documented_limits():
+    # The docstring: outside the radius more terms are worse (arctan at x = 1.1), and cancellation leaves
+    # about 1e-9 at x = 20 for J_0 whatever the number of terms (30 terms: about 1e-5, too few)
+    from scipy.special import jv
+
+    arctan = ol.series_coefficients(lambda k, a: -(k - 2) / k * a[k - 2], [0.0, 1.0], 2 * SERIES_TERMS)
+
+    def arctan_error(terms, point):
+        return abs(float(ol.series_value(arctan[:2 * terms], point)) - np.arctan(point))
+
+    assert arctan_error(10, ARCTAN_POINT_OUT) == pytest.approx(ARCTAN_ERROR_10[0], abs=ARCTAN_ERROR_10[1])
+    assert arctan_error(40, ARCTAN_POINT_OUT) == pytest.approx(ARCTAN_ERROR_40[0], abs=ARCTAN_ERROR_40[1])
+    inside = [arctan_error(n, ARCTAN_POINT_IN) for n in ARCTAN_TERMS_IN]
+    assert inside == sorted(inside, reverse=True)
+    j0 = ol.series_coefficients(bessel_rule(0.0), [1.0, 0.0], 4 * SERIES_TERMS)
+
+    def j0_error(terms):
+        return abs(float(ol.series_value(j0[:2 * terms], J0_FAR)) - jv(0, J0_FAR))
+
+    assert j0_error(30) == pytest.approx(J0_TRUNCATION_30[0], rel=J0_TRUNCATION_30[1])
+    for terms in J0_FLOOR_TERMS:
+        assert J0_FLOOR[0] < j0_error(terms) < J0_FLOOR[1]
+    largest = max(abs(c) * J0_FAR ** k for k, c in enumerate(j0))
+    assert largest == pytest.approx(J0_LARGEST_TERM[0], rel=J0_LARGEST_TERM[1])
+
+
+def test_series_value_is_horner_and_keeps_the_shape():
+    rng = np.random.default_rng(INDICIAL_SEED)
+    for _ in range(INDICIAL_DRAWS):
+        coefficients = rng.uniform(*HORNER_RANGE, rng.integers(*HORNER_SIZES))
+        center = rng.uniform(*HORNER_CENTERS)
+        x = rng.uniform(*HORNER_RANGE, HORNER_POINTS)
+        expected = np.polyval(coefficients[::-1], x - center)
+        assert ol.series_value(coefficients, x, center) == pytest.approx(expected, rel=SERIES_EXACT,
+                                                                         abs=SERIES_EXACT)
+    one = ol.series_value([1.0, 2.0, 3.0], 2.0)
+    assert isinstance(one, np.ndarray) and one.shape == () and float(one) == 17.0
+    assert ol.series_value([5.0], [[1.0, 2.0], [3.0, 4.0]]).shape == (2, 2)
+    assert ol.series_value([1.0, 1.0], [1.0, 3.0], x0=1.0) == pytest.approx([1.0, 3.0])
+    assert ol.series_value((1, 2), np.int64(3)) == 7.0                      # whole numbers and tuples
+    assert ol.SERIES_CENTER == 0.0
+
+
+def test_series_coefficients_whole_numbers_and_the_list_a():
+    seen = []
+
+    def rule(k, a):
+        seen.append((k, len(a), a[k - 1]))
+        return a[k - 1] + 1
+
+    assert ol.series_coefficients(rule, [0], np.int64(4)) == pytest.approx([0.0, 1.0, 2.0, 3.0])
+    assert seen == [(1, 1, 0.0), (2, 2, 1.0), (3, 3, 2.0)]
+    assert ol.series_coefficients(rule, [1.0, 2.0], 2) == pytest.approx([1.0, 2.0])     # n = len(initial)
+    assert ol.series_coefficients(lambda k, a: np.float64(a[k - 1]) / 2, np.array([4.0]), 3) == pytest.approx(
+        [4.0, 2.0, 1.0])
+    assert ol.series_coefficients(lambda k, a: np.array(a[k - 1]), [3.0], 2) == pytest.approx([3.0, 3.0])
+
+
+def test_series_coefficients_a_can_be_looped_over_and_sliced():
+    # code review, BUG 1: sum(a), for v in a, np.array(a) and slices inside 0, ..., k - 1 work
+    fibonacci = ol.series_coefficients(lambda k, a: sum(a[k - 2:k]), [1.0, 1.0], 8)
+    assert fibonacci == pytest.approx([1, 1, 2, 3, 5, 8, 13, 21])
+    assert ol.series_coefficients(lambda k, a: sum(a) / k, [1.0], 5) == pytest.approx([1.0] * 5)
+    assert ol.series_coefficients(lambda k, a: float(np.array(a).sum()), [1.0], 4) == pytest.approx(
+        [1, 1, 2, 4])
+    assert ol.series_coefficients(lambda k, a: max(v for v in a) + len(a[:k]), [0.0], 4) == pytest.approx(
+        [0, 1, 3, 6])
+    cut = ol.series_coefficients(lambda k, a: sum(a[:k + 5]), [1.0], 3)      # a slice past k is cut at k
+    assert cut == pytest.approx([1, 1, 2])
+
+
+@pytest.mark.parametrize("bad, words", [
+    (None, "recurrence must be a function of k and a"),
+    ("a[k - 2]", "recurrence must be a function of k and a"),
+])
+def test_series_coefficients_refuses_a_recurrence_that_is_not_a_function(bad, words):
+    with pytest.raises(ValueError, match=words):
+        ol.series_coefficients(bad, [1.0], 3)
+
+
+@pytest.mark.parametrize("bad", [None, [], "1, 0", [1.0, np.nan], [1.0, np.inf], [[1.0, 0.0]], 1.0,
+                                 [True, 0.0], [1.0, 1j], [1.0, None]])
+def test_series_coefficients_refuses_bad_initial_values(bad):
+    with pytest.raises(ValueError, match="initial must be a list of finite real numbers"):
+        ol.series_coefficients(cosh_rule, bad, 5)
+
+
+@pytest.mark.parametrize("bad", [20.0, True, -1, 1, "20", None, ol.MAX_STEPS + 1, np.float64(5)])
+def test_series_coefficients_refuses_bad_n(bad):
+    with pytest.raises(ValueError, match=r"n, the number of coefficients, must be a whole number such as 20"):
+        ol.series_coefficients(cosh_rule, [1.0, 0.0], bad)
+
+
+@pytest.mark.parametrize("rule, initial, words", [
+    (airy_rule, [1.0, 0.0],
+     r"asked for a\[-1\] at k = 2: there is no coefficient with a negative index \(use "
+     r"a\[k - 1\], not a\[-1\], .*give at least 3 initial values"),
+    (lambda k, a: a[-2], [1.0, 2.0], r"asked for a\[-2\] at k = 2: .*\(use a\[k - 2\], not a\[-2\]"),
+    (lambda k, a: a[k], [1.0],
+     r"asked for a\[1\] at k = 1: only a\[0\] to a\[0\] are known when a_1 is computed"),
+    (lambda k, a: a[k / 2], [1.0, 2.0], r"asked for a\[1.0\] at k = 2: an index of a must be a whole number"),
+    (lambda k, a: a[True], [1.0, 2.0], r"an index of a must be a whole number"),
+    (lambda k, a: sum(a[-2:]), [1.0, 2.0],
+     r"asked for a\[-2:None\] at k = 2: a slice of a must start and stop"),
+    (lambda k, a: sum(a[k - 3:k]), [1.0, 2.0], r"asked for a\[-1:2\] at k = 2: a slice of a must start"),
+    (lambda k, a: 1 / (k - 3) * a[k - 1], [1.0],
+     r"stopped with an error at k = 3 \(ZeroDivisionError: .*\): a division by 0 \(if you wrote a power with "
+     r"\^, write \*\* instead\)"),
+    (lambda k, a: np.float64(1.0) / (k - 2), [1.0],
+     r"gives inf at k = 2, not a finite number \(a division by 0\?\)"),
+    (lambda k, a: np.sqrt(2.0 - k), [1.0], r"gives nan at k = 3"),
+    (lambda k, a: "1", [1.0], r"must return one real number, got '1' at k = 1"),
+    (lambda k, a: [1.0], [1.0], r"must return one real number, got \[1.0\] at k = 1"),
+    (lambda k, a: 1j, [1.0], r"must return one real number, got 1j at k = 1"),
+    (lambda k, a: True, [1.0], r"must return one real number, got True at k = 1"),
+    (lambda k, a: None, [1.0], r"must return one real number, got None at k = 1"),
+    (lambda k: k, [1.0], r"stopped at k = 1 with a TypeError .*it must take two arguments, k and the list a"),
+    (lambda k, a: a[k - 1] + "x", [1.0], r"stopped with an error at k = 1 \(TypeError: unsupported operand"),
+    (lambda k, a: k ^ 2.0, [1.0], r"a power is written k \*\* 2, not k \^ 2"),
+    (lambda k, a: undefined_name, [1.0], r"stopped with an error at k = 1 \(NameError"),       # noqa: F821
+])
+def test_series_coefficients_refuses_a_recurrence_with_a_sentence_that_names_k(rule, initial, words):
+    with pytest.raises(ValueError, match=words):
+        ol.series_coefficients(rule, initial, 6)
+
+
+def test_series_coefficients_a_type_error_inside_is_not_called_a_wrong_signature():
+    # code review, STYLE 6: only a function that does not take (k, a) is told to take two arguments
+    with pytest.raises(ValueError) as caught:
+        ol.series_coefficients(lambda k, a: a[k - 1] + "x", [1.0], 3)
+    assert "it must take two arguments" not in str(caught.value)
+
+
+def test_series_coefficients_a_wrong_index_is_never_read_from_the_end():
+    # the bug that this guards against: with a plain list, Airy's rule and two initial values would read
+    # a[-1] = a_1 as a_(-1), and a_2 would come out wrong with no error
+    with pytest.raises(ValueError, match="give at least 3 initial values"):
+        ol.series_coefficients(airy_rule, [0.0, 1.0], 10)
+    with pytest.raises(ValueError, match="give at least 2 initial values"):
+        ol.series_coefficients(cosh_rule, [1.0], 10)
+
+
+@pytest.mark.parametrize("coefficients", [None, [], "1 2", [1.0, np.nan], [[1.0], [2.0]], [1.0, True], 3.0])
+def test_series_value_refuses_bad_coefficients(coefficients):
+    with pytest.raises(ValueError, match="coefficients must be a list of finite real numbers"):
+        ol.series_value(coefficients, 1.0)
+
+
+@pytest.mark.parametrize("x, words", [
+    ("1", "x must be a real number, a list or an array of real numbers"),
+    (np.nan, "x must be a real number, a list or an array of real numbers"),
+    (np.inf, "x must be made of finite real numbers"),
+    ([1.0, -np.inf], "x must be made of finite real numbers"),
+    (1j, "x must be a real number"),
+    (None, "x must be a real number"),
+])
+def test_series_value_refuses_bad_x(x, words):
+    with pytest.raises(ValueError, match=words):
+        ol.series_value([1.0, 2.0], x)
+
+
+@pytest.mark.parametrize("x0", [None, np.nan, np.inf, True, "0", 1j, [0.0, 1.0]])
+def test_series_value_refuses_bad_x0(x0):
+    with pytest.raises(ValueError, match="x0 must be one finite real number"):
+        ol.series_value([1.0, 2.0], 1.0, x0)
+
+
+def test_series_value_too_large_for_the_computer():
+    with pytest.raises(ValueError, match="the partial sum is too large for the computer"):
+        ol.series_value([1.0, 1.0, 1.0], 1e200)
+    with pytest.raises(ValueError, match="the partial sum is too large for the computer"):
+        ol.series_value([0.0, 1e300, -1e300], [1.0, 1e10])
+
+
+def test_series_value_x_minus_x0_too_large_gives_no_warning():
+    # code review, RISK 2: x - x0 overflows; with warnings as errors the answer is still the ValueError
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(ValueError, match="the partial sum is too large for the computer"):
+            ol.series_value([2.0, 1.0], HUGE_X, -HUGE_X)
+        assert float(ol.series_value([2.0], HUGE_X, -HUGE_X)) == 2.0     # one coefficient: a_0 itself
+
+
+# The four cases: (p0, q0) -> (r1, r2, case). Lebl's examples, the notebook's, and exercises with answers.
+INDICIAL_BOOK = {
+    "Example 7.3.2, 4x^2 y'' - 4x^2 y' + (1 - 2x) y = 0": ((0.0, 0.25), (0.5, 0.5, ol.INDICIAL_DOUBLE)),
+    "Example 7.3.3, x^2 y'' + x(1 + x) y' + (pi + x^2) y = 0": (
+        (1.0, np.pi), (1j * np.sqrt(np.pi), -1j * np.sqrt(np.pi), ol.INDICIAL_COMPLEX)),
+    "Exercise 7.3.8, x^2 y'' - y = 0": (
+        (0.0, -1.0), ((1 + np.sqrt(5)) / 2, (1 - np.sqrt(5)) / 2, ol.INDICIAL_NOT_INTEGER)),
+    "Exercise 7.3.10, x^2 y'' - x y' + y = 0": ((-1.0, 1.0), (1.0, 1.0, ol.INDICIAL_DOUBLE)),
+    "notebook 21, Exercise 2(c), 2x^2 y'' + 3x y' - (1 + x) y = 0": (
+        (1.5, -0.5), (0.5, -1.0, ol.INDICIAL_NOT_INTEGER)),
+    "Bessel, order 0": ((1.0, 0.0), (0.0, 0.0, ol.INDICIAL_DOUBLE)),
+    "Bessel, order 1/2": ((1.0, -0.25), (0.5, -0.5, ol.INDICIAL_INTEGER)),
+    "Bessel, order 1": ((1.0, -1.0), (1.0, -1.0, ol.INDICIAL_INTEGER)),
+    "Bessel, order 1/3": ((1.0, -1 / 9), (1 / 3, -1 / 3, ol.INDICIAL_NOT_INTEGER)),
+    "Euler, x^2 y'' - 2x y' + 2y = 0": ((-2.0, 2.0), (2.0, 1.0, ol.INDICIAL_INTEGER)),
+    "Euler, x^2 y'' + 2x y' = 0": ((2.0, 0.0), (0.0, -1.0, ol.INDICIAL_INTEGER)),
+}
+
+
+@pytest.mark.parametrize("name", sorted(INDICIAL_BOOK))
+def test_indicial_roots_of_the_book_and_the_notebook(name):
+    (p0, q0), (r1, r2, case) = INDICIAL_BOOK[name]
+    found = ol.indicial_roots(p0, q0)
+    assert found[2] == case
+    assert found[0] == pytest.approx(r1, abs=SERIES_EXACT) and found[1] == pytest.approx(r2, abs=SERIES_EXACT)
+    for root in found[:2]:                  # each root solves r(r - 1) + p0 r + q0 = 0
+        assert root * (root - 1) + p0 * root + q0 == pytest.approx(0.0, abs=SERIES_EXACT)
+    kind = complex if case == ol.INDICIAL_COMPLEX else float
+    assert all(type(root) is kind for root in found[:2])
+
+
+def test_indicial_roots_seeded_pairs_of_each_kind():
+    # p0 = 1 - (r1 + r2) and q0 = r1 r2 have the roots r1 and r2
+    rng = np.random.default_rng(INDICIAL_SEED)
+    for _ in range(INDICIAL_DRAWS):
+        root = rng.uniform(*ROOT_RANGE)
+        whole = int(rng.choice(WHOLE_DIFFERENCES))
+        other = root - whole - rng.uniform(*NOT_WHOLE_SHARE)     # a difference that is not a whole number
+        cases = {(root, root): ol.INDICIAL_DOUBLE, (root, root - whole): ol.INDICIAL_INTEGER,
+                 (root, other): ol.INDICIAL_NOT_INTEGER}
+        for (r1, r2), case in cases.items():
+            found = ol.indicial_roots(1 - (r1 + r2), r1 * r2)
+            assert found[2] == case and found[:2] == pytest.approx((r1, r2), abs=ROOT_AGREEMENT)
+        alpha, beta = rng.uniform(*ROOT_RANGE), rng.uniform(*BETA_RANGE)
+        found = ol.indicial_roots(1 - 2 * alpha, alpha ** 2 + beta ** 2)
+        assert found[2] == ol.INDICIAL_COMPLEX
+        assert found[0] == pytest.approx(complex(alpha, beta))
+        assert found[1] == pytest.approx(complex(alpha, -beta))
+
+
+def test_indicial_roots_at_and_near_the_borders_of_the_cases():
+    # the rule of the docstring: (r1 - r2)^2 within INDICIAL_TOLERANCE max(1, (p0 - 1)^2 + 4 |q0|) of m^2
+    tol = ol.INDICIAL_TOLERANCE
+    assert tol == 1e-12
+    # a double root typed with decimals: 0.7 and 0.0225 give (r - 0.15)^2 only up to rounding
+    r1, r2, case = ol.indicial_roots(0.7, 0.0225)
+    assert case == ol.INDICIAL_DOUBLE and r1 == r2 == pytest.approx(0.15)
+    # roots 1 +- gap/2 (and 1 +- i gap/2): p0 = -1, q0 = 1 -+ gap^2/4, and max(1, ...) is about 8
+    for gap in (1e-7, 1e-6):                # closer than about 1e-6: a double root 1
+        assert ol.indicial_roots(-1.0, 1 - gap ** 2 / 4)[:2] == (1.0, 1.0)
+        assert ol.indicial_roots(-1.0, 1 - gap ** 2 / 4)[2] == ol.INDICIAL_DOUBLE
+        assert ol.indicial_roots(-1.0, 1 + gap ** 2 / 4)[2] == ol.INDICIAL_DOUBLE
+    for gap in (1e-5, 1e-3):                # farther: two roots, or complex ones
+        assert ol.indicial_roots(-1.0, 1 - gap ** 2 / 4)[2] == ol.INDICIAL_NOT_INTEGER
+        assert ol.indicial_roots(-1.0, 1 + gap ** 2 / 4)[2] == ol.INDICIAL_COMPLEX
+    for whole in (1, 2, 7):                 # roots 0 and -(whole + off): p0 = 1 + whole + off, q0 = 0
+        assert ol.indicial_roots(1.0 + whole, 0.0)[2] == ol.INDICIAL_INTEGER
+        offs = {0.1 * tol * whole: ol.INDICIAL_INTEGER, 10 * tol * whole: ol.INDICIAL_NOT_INTEGER,
+                1e-6: ol.INDICIAL_NOT_INTEGER, 0.5: ol.INDICIAL_NOT_INTEGER}
+        for off, case in offs.items():
+            assert ol.indicial_roots(1.0 + whole + off, 0.0)[2] == case
+    assert ol.indicial_roots(1.0, 0.0) == (0.0, 0.0, ol.INDICIAL_DOUBLE)
+    assert str(ol.indicial_roots(1.0, 0.0)[0]) == "0.0"   # not -0.0
+    assert str(ol.indicial_roots(2.0, 0.0)[0]) == "0.0"   # code review, STYLE 4: 0.0 / -1.0 was -0.0
+    assert ol.indicial_roots(sum([0.1] * 10), -0.25)[2] == ol.INDICIAL_INTEGER   # 0.999... for 1: +-1/2
+
+
+def test_indicial_roots_large_and_small_numbers():
+    big = 1e4 + 0.5                         # roots near 1e4 and 1e-4: no cancellation
+    r1, r2, case = ol.indicial_roots(1 - big, 1.0)
+    assert r1 == pytest.approx(big) and r2 == pytest.approx(1 / big, rel=SERIES_EXACT)
+    assert case == ol.INDICIAL_NOT_INTEGER
+    assert ol.indicial_roots(np.float64(1.0), np.int64(-4)) == (2.0, -2.0, ol.INDICIAL_INTEGER)
+    assert ol.indicial_roots(3, 1) == (-1.0, -1.0, ol.INDICIAL_DOUBLE)
+
+
+def test_indicial_roots_the_documented_band_and_the_refusal_of_large_roots():
+    # mathematics review, ERROR 1: the docstring's example (roots 1000 and 1000.002 give the double root
+    # 1000.001), and roots of size 1.8e5 and more are refused instead of being guessed
+    assert ol.indicial_roots(*LARGE_GAP)[:2] == pytest.approx((LARGE_DOUBLE, LARGE_DOUBLE))
+    assert ol.indicial_roots(*LARGE_GAP)[2] == ol.INDICIAL_DOUBLE
+    assert ol.INDICIAL_AMBIGUOUS == 0.25
+    accepted, refused = AMBIGUOUS_SIDES
+    assert ol.indicial_roots(1 - 2 * accepted, accepted ** 2)[2] == ol.INDICIAL_DOUBLE
+    with pytest.raises(ValueError, match="too large for the computer to tell a double root from two roots 1"):
+        ol.indicial_roots(1 - 2 * refused, refused ** 2)
+    # the reviewer's rows: roots 1000001 and 1000000 (and others) were a "double root"; now refused
+    for p0, q0 in ((-2000000.0, 1000001000000.0), (-1999999.5, 1000000500000.0), (2000000.5, 999999500000.0)):
+        with pytest.raises(ValueError, match="the roots, up to about 1e\\+06 in size, are too large"):
+            ol.indicial_roots(p0, q0)
+
+
+def test_indicial_roots_the_rechecked_sentences_of_the_docstring():
+    # re-check, findings 1 to 3: the band 1e-6 sqrt(...), the size named in the refusal, and the wide bands
+    # just below the limit (all outside the range of the course, and said in the docstring)
+    near, gaps_in, gaps_out = RECHECK_BAND
+    for gap in gaps_in:
+        assert ol.indicial_roots(1 - (2 * near + gap), near * (near + gap))[2] == ol.INDICIAL_DOUBLE
+    for gap in gaps_out:
+        assert ol.indicial_roots(1 - (2 * near + gap), near * (near + gap))[2] == ol.INDICIAL_NOT_INTEGER
+    with pytest.raises(ValueError, match="the roots, up to about 3e\\+05 in size"):
+        ol.indicial_roots(1.0, -RECHECK_SYMMETRIC ** 2)            # roots +-3e5: the mean 0 is not named
+    assert ol.indicial_roots(1 - RECHECK_COMPUTED, 0.0)[:2] == (RECHECK_COMPUTED, 0.0)   # 4e5, 0: computed
+    low, (close, near_one) = RECHECK_WIDE
+    double = ol.indicial_roots(1 - (2 * low + close), low * (low + close))
+    assert double[2] == ol.INDICIAL_DOUBLE and double[0] == pytest.approx(low + close / 2)
+    assert ol.indicial_roots(1 - (2 * low + near_one), low * (low + near_one))[2] == ol.INDICIAL_INTEGER
+
+
+@pytest.mark.parametrize("p0, q0, words", [
+    (None, 0.0, "p0 must be one finite real number"), ("1", 0.0, "p0 must be one finite real number"),
+    (np.nan, 0.0, "p0 must be one finite real number"), (np.inf, 0.0, "p0 must be one finite real number"),
+    (True, 0.0, "p0 must be one finite real number"), (1j, 0.0, "p0 must be one finite real number"),
+    (10 ** 400, 0.0, "p0 must be one finite real number"),
+    ([1.0, 2.0], 0.0, "p0 must be one finite real number"),
+    (1.0, None, "q0 must be one finite real number"), (1.0, np.nan, "q0 must be one finite real number"),
+    (1.0, False, "q0 must be one finite real number"), (1.0, "0", "q0 must be one finite real number"),
+    (1e200, 0.0, "are too large for the computer"), (1.0, -np.inf, "q0 must be one finite real number"),
+    (1.0, 1e308, "are too large for the computer"),
+    (1.0, -(1e100 ** 2), "too large for the computer to tell"),
+])
+def test_indicial_roots_refuses_bad_input(p0, q0, words):
+    with pytest.raises(ValueError, match=words):
+        ol.indicial_roots(p0, q0)
+
+
+def test_series_functions_leave_warnings_and_numpy_settings_alone():
+    filters, settings = list(warnings.filters), np.geterr()
+    ol.series_coefficients(cosh_rule, [1.0, 0.0], SERIES_TERMS)
+    with pytest.raises(ValueError):
+        ol.series_coefficients(lambda k, a: np.float64(1.0) / 0.0, [1.0], 3)
+    with pytest.raises(ValueError):
+        ol.series_value([1.0, 1.0, 1.0], 1e200)
+    ol.indicial_roots(0.7, 0.0225)
+    assert list(warnings.filters) == filters and np.geterr() == settings
+    assert ol.SETUP_NAMES == ("np", "sp", "plt", "ol", "solve_ivp", "interact", "FloatSlider", "IntSlider")
+    assert (ol.INDICIAL_NOT_INTEGER, ol.INDICIAL_DOUBLE, ol.INDICIAL_INTEGER, ol.INDICIAL_COMPLEX) == (
+        "two real roots, difference not a whole number", "double root",
+        "two real roots, difference a whole number", "complex roots")

@@ -74,7 +74,55 @@ SWITCH_LATE_2B = "my_switch_2b = (1 - sp.cos(t - 1)) * u(t - 1.2)"       # the s
 BLOW_LATE_2C = "my_blow_2c = 2 * sp.sin(2 * (t - 1)) * u(t - 1.4)"
 HAMMER_NUMBERS = "MY_MASS, MY_DAMPER, MY_SPRING, MY_BLOW = 1.0, 2.0, 5.0, 3.0"
 CONVOLUTION_ONE_SINE = "my_convolution_2d = sp.sqrt(2) * sp.sin(t + sp.pi / 4) / 2 - sp.exp(-t) / 2"
+NAME_21 = "21_Series_Solutions.ipynb"
+RULE_J1 = "    return -a[k - 2] / (k * (k + 2))"                    # Exercise 2(d), the answer
+RULE_J0 = "    return -a[k - 2] / k ** 2"                           # the rule of J_0, a taught mistake
+SERIES_CHECKS = "the computer disagrees with the table above"
+AIRY_SENTENCE = ("the series disagree with SciPy: put back the 40 coefficients and the points 1, 2, -3 "
+                 "of the text")
 EXERCISES = {
+    NAME_21: {
+        "answers": {
+            "my_radius_1a = None": "my_radius_1a = 2",
+            "my_ordinary_1b = None": "my_ordinary_1b = True",
+            "my_nearest_1b = None": "my_nearest_1b = 1",
+            "my_roots_1c = None": "my_roots_1c = [2, 1]",
+            "my_case_half = None": "my_case_half = ol.INDICIAL_INTEGER",
+            "my_case_one = None": "my_case_one = ol.INDICIAL_INTEGER",
+            "my_case_zero = None": "my_case_zero = ol.INDICIAL_DOUBLE",
+            "my_coefficients_2a = None": "my_coefficients_2a = [1, 0, -1 / 2, 0, 1 / 8]",
+            "my_function_2a = None": "my_function_2a = sp.exp(-x ** 2 / 2)",
+            "my_bound_2b = None": "my_bound_2b = np.sqrt(5)",
+            "my_p0_2c = None": "my_p0_2c = 3 / 2",
+            "my_q0_2c = None": "my_q0_2c = -1 / 2",
+            "my_roots_2c = None": "my_roots_2c = [1 / 2, -1]",
+            FILL_IN: RULE_J1,
+        },
+        "solved": ("Exercise 1a: correct", "Exercise 1b, ordinary: correct",
+                   "Exercise 1b, nearest singular point: correct", "Exercise 1c: correct",
+                   "Exercise 1d, order 1/2: correct", "Exercise 1d, order 1: correct",
+                   "Exercise 1d, order 0: correct", "Exercise 2a, coefficients: correct",
+                   "Exercise 2a, the function: correct", "Exercise 2b: correct", "Exercise 2c, p0: correct",
+                   "Exercise 2c, q0: correct", "Exercise 2c, roots: correct", "Exercise 2d: correct"),
+        "unsolved": ("Exercise 1a: no answer yet", "Exercise 1d, order 0: no answer yet",
+                     "Exercise 2a, the function: no answer yet", "Exercise 2c, roots: no answer yet",
+                     "Exercise 2d: no answer yet (complete bessel_1_rule)"),
+        "wrong": ({"my_radius_1a = None": "my_radius_1a = 4",                      # 4 + x^2: the constant
+                   "my_ordinary_1b = None": "my_ordinary_1b = False",
+                   "my_nearest_1b = None": "my_nearest_1b = -1",
+                   "my_roots_1c = None": "my_roots_1c = [1, -2]",
+                   "my_case_half = None": "my_case_half = ol.INDICIAL_NOT_INTEGER",   # the difference is 1
+                   "my_case_one = None": "my_case_one = ol.INDICIAL_DOUBLE",
+                   "my_case_zero = None": "my_case_zero = ol.INDICIAL_INTEGER",
+                   "my_coefficients_2a = None": "my_coefficients_2a = [1, 0, 1 / 2, 0, 1 / 8]",     # a sign
+                   "my_function_2a = None": "my_function_2a = sp.exp(x ** 2 / 2)",
+                   "my_bound_2b = None": "my_bound_2b = 1",                          # the real part only
+                   "my_p0_2c = None": "my_p0_2c = 3",                                # not divided by 2
+                   "my_q0_2c = None": "my_q0_2c = 1 / 2",
+                   "my_roots_2c = None": "my_roots_2c = [1, -1 / 2]",
+                   FILL_IN: RULE_J0},
+                  "Exercise 2d: not yet (this is the rule of J_0"),
+    },
     NAME_20: {
         "answers": {
             "my_window_at_4 = None": "my_window_at_4 = 1",
@@ -1096,6 +1144,162 @@ def test_notebook_20_u_is_one_step_for_formulas_and_for_numbers():
     assert "Exercise 2a: correct" in text and "Exercise 2c: correct" in text
 
 
+@pytest.mark.parametrize("answers, message", [
+    # other accepted forms: the roots in either order, as a tuple or an array; any way of writing the formula
+    ({"my_roots_1c = None": "my_roots_1c = [1, 2]"}, "Exercise 1c: correct"),
+    ({"my_roots_1c = None": "my_roots_1c = (1.0, 2.0)"}, "Exercise 1c: correct"),
+    ({"my_roots_2c = None": "my_roots_2c = np.array([-1, 0.5])"}, "Exercise 2c, roots: correct"),
+    ({"my_roots_2c = None": "my_roots_2c = [sp.Rational(1, 2), -1]"}, "Exercise 2c, roots: correct"),
+    ({"my_bound_2b = None": "my_bound_2b = 5 ** 0.5"}, "Exercise 2b: correct"),
+    ({"my_coefficients_2a = None": "my_coefficients_2a = np.array([1, 0, -0.5, 0, 0.125])"},
+     "Exercise 2a, coefficients: correct"),
+    ({"my_function_2a = None": "my_function_2a = 1 / sp.exp(x ** 2 / 2)"},
+     "Exercise 2a, the function: correct"),
+    ({"my_case_half = None": 'my_case_half = "two real roots, difference a whole number"'},
+     "Exercise 1d, order 1/2: correct"),
+    ({"my_case_zero = None": 'my_case_zero = " Double Root "'}, "Exercise 1d, order 0: correct"),
+    ({FILL_IN: "    return -a[k - 2] / ((k + 1) ** 2 - 1)"}, "Exercise 2d: correct"),
+    # wrong answers, each with its message
+    ({"my_radius_1a = None": "my_radius_1a = 4"},
+     "(where is 4 + x^2 = 0? The distance from 0 to those points"),
+    ({"my_radius_1a = None": 'my_radius_1a = "2"'}, "Exercise 1a: not yet (type your answer without quotes"),
+    ({"my_roots_1c = None": 'my_roots_1c = "2, 1"'}, "Exercise 1c: not yet (type your answer without quotes"),
+    ({"my_roots_1c = None": "my_roots_1c = [2, 1, 0]"}, "Exercise 1c: not yet (2 value(s) expected, got 3"),
+    ({"my_case_half = None": 'my_case_half = "whole"'},
+     "Exercise 1d, order 1/2: not yet (write one of the four names, such as ol.INDICIAL_COMPLEX, without "
+     "quotes)"),
+    ({"my_case_half = None": "my_case_half = INDICIAL_INTEGER"},                   # ol. forgotten
+     "Exercise 1d, order 1/2: not yet (write ol.INDICIAL_INTEGER, with ol. in front)"),
+    ({"my_case_one = None": "my_case_one = 1"}, "Exercise 1d, order 1: not yet (write one of the four names"),
+    ({"my_case_one = None": "my_case_one = ol.INDICIAL_DOUBLE"}, "Exercise 1d, order 1: not yet, try again"),
+    ({"my_roots_1c = None": "my_roots_1c = [1 + 1j, 1 - 1j]"},                    # r^2 - 2r + 2 = 0
+     "Exercise 1c: not yet (the indicial equation starts with r(r - 1), not r^2"),
+    ({"my_roots_2c = None": "my_roots_2c = [(-3 + 17 ** 0.5) / 4, (-3 - 17 ** 0.5) / 4]"},
+     "Exercise 2c, roots: not yet (the indicial equation starts with r(r - 1), not r^2"),
+    ({"my_coefficients_2a = None": "my_coefficients_2a = [1, 0, 0, 0, 0]"},
+     "Exercise 2a, coefficients: not yet (the term y gives a_k too: k a_k + a_k = (k + 1) a_k)"),
+    ({"my_coefficients_2a = None": "my_coefficients_2a = [1, 0, 1 / 2, 0, 1 / 8]"},
+     "Exercise 2a, coefficients: not yet (a sign: (k + 2)(k + 1) a_(k+2) = -(k + 1) a_k)"),
+    ({"my_coefficients_2a = None": "my_coefficients_2a = [1, 0, -1, 0, 1 / 3]"},
+     "Exercise 2a, coefficients: not yet ((k + 1) cancels"),
+    ({"my_coefficients_2a = None": "my_coefficients_2a = [1, 0, -1 / 2, 0]"},
+     "Exercise 2a, coefficients: not yet (5 value(s) expected, got 4"),
+    ({"my_function_2a = None": 'my_function_2a = "sp.exp(-x ** 2 / 2)"'},
+     "Exercise 2a, the function: not yet (type the formula without quotes)"),
+    ({"my_function_2a = None": "my_function_2a = 1 - x ** 2 / 2 + x ** 4 / 8"},
+     "Exercise 2a, the function: not yet (this is the partial sum; the whole series is e^u for some u)"),
+    ({"my_bound_2b = None": "my_bound_2b = 2"},
+     "Exercise 2b: not yet (the distance from 0 to 1 + 2i is sqrt"),
+    ({"my_bound_2b = None": "my_bound_2b = 5"},
+     "Exercise 2b: not yet (the distance from 0 to 1 + 2i is sqrt(1^2 + 2^2): not 1, 2 or 1^2 + 2^2)"),
+    ({"my_bound_2b = None": "my_bound_2b = 3"}, "Exercise 2b: not yet (your value 3, try again)"),
+    ({"my_p0_2c = None": "my_p0_2c = 3"}, "Exercise 2c, p0: not yet (divide by P = 2x^2 first"),
+    ({"my_q0_2c = None": "my_q0_2c = 1 / 2"}, "Exercise 2c, q0: not yet (a sign: R(x) = -(1 + x))"),
+    ({FILL_IN: RULE_J0}, "Exercise 2d: not yet (this is the rule of J_0: with r = 1 the factor is"),
+    ({FILL_IN: "    return -a[k - 3] / (k * (k + 2))"},
+     "Exercise 2d: not yet (the recurrence asked for a[-1] at k = 2"),
+    ({FILL_IN: "    return -a[k] / (k * (k + 2))"},                                # the readable sentence now
+     "Exercise 2d: not yet (the recurrence asked for a[2] at k = 2: only a[0] to a[1] are known"),
+    ({FILL_IN: "    return 1 / (k - 2) * a[k - 2]"},
+     "Exercise 2d: not yet (the recurrence stopped with an error at k = 2 (ZeroDivisionError"),
+    ({FILL_IN: "    return a[k - 2] / (k * (k + 2))"},
+     "Exercise 2d: not yet (x times your partial sum does not agree with jv(1, x); check the signs"),
+    ({FILL_IN: '    return "-a[k - 2] / (k * (k + 2))"'},
+     "Exercise 2d: not yet (the recurrence must return one real number"),
+])
+def test_notebook_21_particular_answers(answers, message):
+    try:
+        text = printed(execute(with_answers(NAME_21, answers)))
+    except Exception as problem:                               # a wrong answer must never stop the notebook
+        pytest.fail(f"the notebook stopped: {str(problem)[-300:]}")
+    assert message in text
+
+
+def test_notebook_21_np_exp_in_the_formula_gets_the_hint_and_the_other_checks_still_run():
+    # clarity review, finding 14: np.exp of a SymPy formula stops only its own answer cell, with the hint
+    nb = with_answers(NAME_21, {**EXERCISES[NAME_21]["answers"],
+                                "my_function_2a = None": "my_function_2a = np.exp(-x ** 2 / 2)"})
+    nbclient.NotebookClient(nb, timeout=TIMEOUT_SECONDS, kernel_name="python3", allow_errors=True,
+                            resources={"metadata": {"path": str(NOTEBOOKS)}}).execute()
+    cell = next(cell for cell in nb.cells
+                if cell.cell_type == "code" and "my_function_2a = np.exp" in cell.source)
+    red = "".join(output.get("text", "") for output in cell.outputs if output.output_type == "stream")
+    assert HINT in red and "sp.exp" in red
+    text = printed(nb)
+    assert "Exercise 2c, roots: correct" in text and "Exercise 2d: correct" in text
+
+
+def test_notebook_21_a_misspelt_case_name_gets_the_four_names():
+    # re-check, finding 8: ol.INDICIAL_INTEGRAL stops the answer cell; the hint under it lists the four names
+    nb = with_answers(NAME_21, {"my_case_half = None": "my_case_half = ol.INDICIAL_INTEGRAL"})
+    nbclient.NotebookClient(nb, timeout=TIMEOUT_SECONDS, kernel_name="python3", allow_errors=True,
+                            resources={"metadata": {"path": str(NOTEBOOKS)}}).execute()
+    cell = next(cell for cell in nb.cells
+                if cell.cell_type == "code" and "my_case_half = ol.INDICIAL_INTEGRAL" in cell.source)
+    red = "".join(output.get("text", "") for output in cell.outputs if output.output_type == "stream")
+    assert HINT + "the four names are ol.INDICIAL_NOT_INTEGER, ol.INDICIAL_DOUBLE" in red
+
+
+def test_notebook_21_sections_can_be_run_again_after_the_exercises():
+    # the lesson of notebook 15: no global name of the sections is redefined by an exercise
+    nb = with_answers(NAME_21, EXERCISES[NAME_21]["answers"])
+    again = [cell.source for cell in nb.cells if cell.cell_type == "code"
+             and "import odelib as ol" not in cell.source and "interact(" not in cell.source]
+    nb.cells.extend(nbformat.v4.new_code_cell(source) for source in again)
+    text = printed(execute(nb))
+    assert text.count("Exercise 2d: correct") == 2 and text.count("Exercise 2c, roots: correct") == 2
+    assert text.count("Lebl, Example 7.3.3: r1 = 0.0000+1.7725j") == 2
+
+
+@pytest.mark.parametrize("changes, line", [
+    # the numbers that the comments of the cells invite a student to change: no bare AssertionError
+    ({"X_SHOWN = (0.5, 1.5) ": "X_SHOWN = (1.0, 2.0) "}, "1/(1 - x) = not defined"),
+    ({"X_SHOWN = (0.5, 1.5) ": "X_SHOWN = (-0.9, 3.0) "},
+     "the functions: e^x = 20.085537, 1/(1 - x) = -0.500000"),
+    ({"N_COEFFICIENTS = 12 ": "N_COEFFICIENTS = 20 "}, "19                 0"),
+    ({"N_COEFFICIENTS = 12 ": "N_COEFFICIENTS = 2 "}, " 1                 0             0"),
+    ({"P_COEFFICIENTS = [1, 0, 1] ": "P_COEFFICIENTS = [1, 0, 4] "}, "the bound: 2.0"),
+    ({"P_COEFFICIENTS = [1, 0, 1] ": "P_COEFFICIENTS = [1, -2, 5] "}, "the bound: 2.23606797749979"),
+    ({"X0 = 0.0 ": "X0 = 0.5 "}, "the bound: 1.118033988749895"),
+    ({"P_COEFFICIENTS = [1, 0, 1] ": "P_COEFFICIENTS = [1] "},                     # re-check, finding 4
+     "P has no zeros (a constant P): every point is ordinary"),
+    ({"MY_P0, MY_Q0 = 3.0, 1.0 ": "MY_P0, MY_Q0 = 0.5, 2.0 "}, "yours: ((0.25+1.3919410907075054j)"),
+    ({"MY_P0, MY_Q0 = 3.0, 1.0 ": "MY_P0, MY_Q0 = 0.0, -2.0 "},
+     "yours: (2.0, -1.0, 'two real roots, difference a whole number')"),
+    ({"MY_P0, MY_Q0 = 3.0, 1.0 ": "MY_P0, MY_Q0 = 2.0, 0.0 "},
+     "yours: (0.0, -1.0, 'two real roots, difference a whole number')"),          # not -0.0
+])
+def test_notebook_21_survives_the_numbers_a_student_changes(changes, line):
+    try:
+        text = printed(execute(with_answers(NAME_21, changes)))
+    except Exception as problem:
+        pytest.fail(f"the notebook stopped: {str(problem)[-300:]}")
+    assert line in text
+
+
+@pytest.mark.parametrize("changes, sentence", [
+    # the numbers of the text: a cell that checks them stops with a sentence, not with a bare AssertionError
+    ({"BY_HAND = [1, 0, 1 / 2, 0, 1 / 24, 0, 1 / 720] ": "BY_HAND = [1, 0, 1 / 2, 0, 1 / 12, 0, 1 / 720] "},
+     SERIES_CHECKS),
+    ({"AIRY_COEFFICIENTS = 40 ": "AIRY_COEFFICIENTS = 10 "}, AIRY_SENTENCE),
+    ({"X_FAR = 10.0 ": "X_FAR = 5.0 "},
+     "this cell checks the numbers of the answer: put back X_FAR and N_RANGE_2"),
+])
+def test_notebook_21_cells_of_the_text_stop_with_a_sentence(changes, sentence):
+    with pytest.raises(nbclient.exceptions.CellExecutionError, match="AssertionError") as stopped:
+        execute(with_answers(NAME_21, changes))
+    assert sentence in str(stopped.value)
+
+
+def test_notebook_21_a_number_below_the_initial_values_stops_with_the_library_sentence():
+    # N_COEFFICIENTS = 1 is fewer than the two initial values: a ValueError with one sentence, not a traceback
+    # that ends in an AssertionError
+    with pytest.raises(nbclient.exceptions.CellExecutionError, match="ValueError") as stopped:
+        execute(with_answers(NAME_21, {"N_COEFFICIENTS = 12 ": "N_COEFFICIENTS = 1 "}))
+    sentence = "n, the number of coefficients, must be a whole number such as 20 (not 20.0), from 2"
+    assert sentence in str(stopped.value)
+
+
 def test_is_exact_written_with_an_equation_gets_a_hint_not_a_traceback():
     name = "12_Exact_Equations.ipynb"
     text = printed(execute(with_answers(name, {FILL_IN: "    return sp.Eq(sp.diff(M, y), sp.diff(N, x))"})))
@@ -1204,6 +1408,9 @@ def test_an_error_still_stops_a_notebook_that_uses_the_library():
 # Slider functions at the ends of their sliders: the cases that used to stop with a traceback
 # or draw an empty picture (review of 2026-11-17). Each line is run in a cell added at the end.
 EXTREMES = {
+    NAME_21: ("plot_bump(n=1)", "plot_bump(n=30)", "plot_bump(n=5)", "plot_bump(n=2)",
+              "plot_bessel(n=1)", "plot_bessel(n=30)", "plot_bessel(n=10)", "plot_bessel(n=19)",
+              "plot_bessel(n=20)"),
     NAME_20: ("plot_rocket(d=0.5)", "plot_rocket(d=8.0)", "plot_rocket(d=4.0)",
               "plot_rocket(d=0.5 + 75 * 0.1)",                        # 8.0 as the slider gives it
               "plot_rocket(d=0.5 + 58 * 0.1)",                        # 6.3, the position nearest to 2 pi

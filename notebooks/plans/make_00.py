@@ -203,6 +203,7 @@ home page, by week.
 | 18 | [The phase plane and nonlinear systems](18_Phase_Plane.ipynb) | $x' = f(x, y),\ y' = g(x, y)$ | 19-20 | 3.5, 8.1-8.3 |
 | 19 | [The Laplace transform](19_Laplace_Transform.ipynb) | $F(s) = \int_0^\infty e^{-st}f(t)\,dt$ | 23-24 | 6.1, 6.2 |
 | 20 | [Steps, impulses, and convolution](20_Steps_Impulses_Convolution.ipynb) | $(f * g)(t) = \int_0^t f(\tau)\,g(t - \tau)\,d\tau$ | 25-26 | 6.2-6.4 |
+| 21 | [Series solutions](21_Series_Solutions.ipynb) | $y = \sum_{k} a_kx^k$; $y = x^r\sum_{k} a_kx^k$ | 27-28 | 7.1-7.3 |
 
 The **course text** is J. Lebl, *Notes on Diffy Qs: Differential Equations for Engineers*, free
 on LibreTexts; the section numbers above are those of that edition.

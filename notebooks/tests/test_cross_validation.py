@@ -804,3 +804,169 @@ def test_the_exercises_of_notebook_20_against_sympy():
     switches = ((1, 1), (-1, 5), (1, second), (-1, second + 4))             # on, off, on, off
     twice = sum(sign * (1 - np.cos(end - time)) for sign, time in switches)
     assert twice == pytest.approx(0.0, abs=STEP_AGREEMENT)
+
+
+# --- series solutions (notebook 21; Lebl, Sections 7.1 to 7.3) ----------------------------------------
+XV = sp.symbols("x")                       # SymPy's x here (X is taken by the phase-plane tests above)
+SERIES_AGREEMENT = 1e-13                    # a coefficient against SymPy's exact one, times max(1, |a_k|)
+DSOLVE_ORDER = 8                            # SymPy's power series solution up to x^7
+RESIDUAL_COEFFICIENTS = 16                  # partial sums put in the equation
+INDICIAL_SETS = 30                          # seeded rational pairs of roots
+ROOT_NUMERATORS = (-12, 13)                 # roots drawn among n / d, n in this range (high excluded)
+ROOT_DENOMINATORS = (1, 2, 3, 4)
+R_732 = 0.5                                 # the double root of Lebl's Example 7.3.2
+DIGITS = 30                                 # SymPy's working digits for floats and series
+DOUBLE_SHARE = 0.25                         # the share of seeded equations given a double root
+Q_SHIFTS = (1, 9)                           # q0 is raised by n/2, n among these (high excluded)
+
+
+def poly_coefficients(expression, count):
+    """The coefficients of x^0, ..., x^(count - 1) of a polynomial in XV, as floats."""
+    poly = sp.Poly(sp.expand(expression), XV)
+    return [float(poly.coeff_monomial(XV ** k)) for k in range(count)]
+
+
+def close(found, exact):
+    return all(abs(a - b) <= SERIES_AGREEMENT * max(1.0, abs(b)) for a, b in zip(found, exact, strict=True))
+
+
+# equation -> (its left side for y, the recurrence of the notebook, initial values). A partial sum of
+# RESIDUAL_COEFFICIENTS terms put in the equation leaves only powers above x^(RESIDUAL_COEFFICIENTS - 3).
+SERIES_EQUATIONS = {
+    "y'' - y = 0 (Lebl, Example 7.2.1)": (
+        lambda y: y.diff(XV, 2) - y, lambda k, a: a[k - 2] / (k * (k - 1)), (1.0, 0.0)),
+    "y'' - x y = 0, Airy (Lebl, Example 7.2.2)": (
+        lambda y: y.diff(XV, 2) - XV * y, lambda k, a: a[k - 3] / (k * (k - 1)), (1.0, 0.5, 0.0)),
+    "y'' - 2x y' + 6y = 0, Hermite n = 3 (Lebl, Example 7.2.3)": (
+        lambda y: y.diff(XV, 2) - 2 * XV * y.diff(XV) + 6 * y,
+        lambda k, a: 2 * (k - 2 - 3) / (k * (k - 1)) * a[k - 2], (0.5, 1.0)),
+    "y'' + x y' + y = 0 (notebook 21, Exercise 2(a))": (
+        lambda y: y.diff(XV, 2) + XV * y.diff(XV) + y, lambda k, a: -a[k - 2] / k, (1.0, 0.0)),
+    "(1 + x^2) y'' + 2x y' = 0 (notebook 21, Section 4)": (
+        lambda y: (1 + XV ** 2) * y.diff(XV, 2) + 2 * XV * y.diff(XV), lambda k, a: -(k - 2) / k * a[k - 2],
+        (0.0, 1.0)),
+    "x^2 y'' + x y' + x^2 y = 0, Bessel of order 0 with r = 0": (
+        lambda y: XV ** 2 * y.diff(XV, 2) + XV * y.diff(XV) + XV ** 2 * y, lambda k, a: -a[k - 2] / k ** 2,
+        (1.0, 0.0)),
+}
+
+
+@pytest.mark.parametrize("name", sorted(SERIES_EQUATIONS))
+def test_partial_sums_put_in_the_equation_leave_only_high_powers(name):
+    # the check of the notebook, "put the series in the equation": every power below the cut is 0
+    equation, rule, initial = SERIES_EQUATIONS[name]
+    found = ol.series_coefficients(rule, list(initial), RESIDUAL_COEFFICIENTS)
+    partial = sum(sp.Float(c, DIGITS) * XV ** k for k, c in enumerate(found))
+    residual = poly_coefficients(equation(partial), RESIDUAL_COEFFICIENTS - 2)
+    assert max(abs(c) for c in residual) <= SERIES_AGREEMENT * max(1.0, max(abs(found)))
+
+
+DSOLVE_CASES = {
+    "y'' - y = 0": (lambda f: f(XV).diff(XV, 2) - f(XV), lambda k, a: a[k - 2] / (k * (k - 1)), 2),
+    "Airy": (lambda f: f(XV).diff(XV, 2) - XV * f(XV), lambda k, a: a[k - 3] / (k * (k - 1)), 3),
+    "y'' + x y' + y = 0": (lambda f: f(XV).diff(XV, 2) + XV * f(XV).diff(XV) + f(XV),
+                           lambda k, a: -a[k - 2] / k, 2),
+    "(1 + x^2) y'' + 2x y' = 0": (lambda f: (1 + XV ** 2) * f(XV).diff(XV, 2) + 2 * XV * f(XV).diff(XV),
+                                  lambda k, a: -(k - 2) / k * a[k - 2], 2),
+}
+
+
+@pytest.mark.parametrize("name", sorted(DSOLVE_CASES))
+def test_series_coefficients_agree_with_dsolve_power_series(name):
+    equation, rule, count = DSOLVE_CASES[name]
+    f = sp.Function("f")
+    general = sp.dsolve(equation(f), f(XV), hint="2nd_power_series_ordinary", n=DSOLVE_ORDER).rhs.removeO()
+    constants = sorted(general.free_symbols - {XV}, key=str)                 # C1, C2 (SymPy ignores ics here)
+    for a0, a1 in ((1, 0), (0, 1), (2, -3)):
+        values = sp.solve([general.subs(XV, 0) - a0, general.diff(XV).subs(XV, 0) - a1], constants)
+        # (SymPy stops the odd series early: x * (1 + ... + x^4) for n = 8, so x^0 to x^5 are compared)
+        exact = poly_coefficients(general.subs(values), DSOLVE_ORDER - 2)
+        initial = [float(a0), float(a1)] + [0.0] * (count - 2)        # Airy: a_2 = 0
+        assert close(ol.series_coefficients(rule, initial, DSOLVE_ORDER - 2), exact)
+
+
+EXACT_SERIES = {
+    "cosh x": (sp.cosh(XV), lambda k, a: a[k - 2] / (k * (k - 1)), (1.0, 0.0)),
+    "sinh x": (sp.sinh(XV), lambda k, a: a[k - 2] / (k * (k - 1)), (0.0, 1.0)),
+    "e^(-x^2/2)": (sp.exp(-XV ** 2 / 2), lambda k, a: -a[k - 2] / k, (1.0, 0.0)),
+    "arctan x": (sp.atan(XV), lambda k, a: -(k - 2) / k * a[k - 2], (0.0, 1.0)),
+    "J_0(x)": (sp.besselj(0, XV), lambda k, a: -a[k - 2] / k ** 2, (1.0, 0.0)),
+    "J_1(x) / x": (sp.besselj(1, XV) / XV, lambda k, a: -a[k - 2] / (k * (k + 2)), (0.5, 0.0)),
+    "e^x, Lebl's Example 7.3.2 with r = 1/2": (
+        sp.exp(XV),
+        lambda k, a: (4 * (k + R_732 - 1) + 2) / (4 * (k + R_732) * (k + R_732 - 1) + 1) * a[k - 1], (1.0,)),
+    "Ai(x) / Ai(0), y1 + (Ai'(0) / Ai(0)) y2": (
+        sp.airyai(XV) / sp.airyai(0), lambda k, a: a[k - 3] / (k * (k - 1)),
+        (1.0, float(sp.airyaiprime(0) / sp.airyai(0)), 0.0)),
+}
+
+
+@pytest.mark.parametrize("name", sorted(EXACT_SERIES))
+def test_series_coefficients_agree_with_sympy_series_of_the_known_solutions(name):
+    function, rule, initial = EXACT_SERIES[name]
+    exact = poly_coefficients(sp.series(function, XV, 0, RESIDUAL_COEFFICIENTS).removeO().evalf(DIGITS),
+                              RESIDUAL_COEFFICIENTS)
+    assert close(ol.series_coefficients(rule, list(initial), RESIDUAL_COEFFICIENTS), exact)
+
+
+def test_hermite_with_n_3_is_the_polynomial_of_the_book():
+    y = XV - sp.Rational(2, 3) * XV ** 3
+    assert sp.expand(y.diff(XV, 2) - 2 * XV * y.diff(XV) + 6 * y) == 0
+    y4 = 1 - 4 * XV ** 2 + sp.Rational(4, 3) * XV ** 4                      # Lebl: n = 4, the even series
+    assert sp.expand(y4.diff(XV, 2) - 2 * XV * y4.diff(XV) + 8 * y4) == 0
+
+
+def exact_case(r1, r2):
+    """The case of two exact roots, decided by SymPy (the definition, without any tolerance)."""
+    if not (r1.is_real and r2.is_real):
+        return ol.INDICIAL_COMPLEX
+    difference = sp.nsimplify(r1 - r2)
+    if difference == 0:
+        return ol.INDICIAL_DOUBLE
+    return ol.INDICIAL_INTEGER if difference.is_integer else ol.INDICIAL_NOT_INTEGER
+
+
+def test_indicial_roots_agree_with_sympy_on_seeded_rational_equations():
+    rng = np.random.default_rng(SEED)
+    r = sp.symbols("r")
+    seen = set()
+    for _ in range(INDICIAL_SETS):
+        r1, r2 = (sp.Rational(int(rng.integers(*ROOT_NUMERATORS)), int(rng.choice(ROOT_DENOMINATORS)))
+                  for _ in range(2))
+        if rng.uniform() < DOUBLE_SHARE:            # a double root now and then
+            r2 = r1
+        p0, q0 = 1 - (r1 + r2), r1 * r2
+        for b0 in (q0, q0 + sp.Rational(int(rng.integers(*Q_SHIFTS)), 2)):    # complex roots from a larger q0
+            roots = sp.solve(r * (r - 1) + p0 * r + b0, r)
+            exact = sorted(roots, key=lambda z: (-sp.re(z), -sp.im(z))) * (2 if len(roots) == 1 else 1)
+            case = exact_case(*exact)
+            found = ol.indicial_roots(float(p0), float(b0))
+            seen.add(case)
+            assert found[2] == case, (p0, b0)
+            assert complex(found[0]) == pytest.approx(complex(exact[0]))
+            assert complex(found[1]) == pytest.approx(complex(exact[1]))
+    assert seen == {ol.INDICIAL_DOUBLE, ol.INDICIAL_INTEGER, ol.INDICIAL_NOT_INTEGER, ol.INDICIAL_COMPLEX}
+
+
+def test_the_limits_and_the_indicial_equations_of_notebook_21():
+    r = sp.symbols("r")
+    examples = {   # P, Q, R of P y'' + Q y' + R y = 0 -> the limits p0, q0 at x = 0
+        "Lebl, Example 7.3.2": (4 * XV ** 2, -4 * XV ** 2, 1 - 2 * XV, 0, sp.Rational(1, 4)),
+        "Lebl, Example 7.3.3": (XV ** 2, XV * (1 + XV), sp.pi + XV ** 2, 1, sp.pi),
+        "Exercise 2(c)": (2 * XV ** 2, 3 * XV, -(1 + XV), sp.Rational(3, 2), -sp.Rational(1, 2)),
+        "Bessel, order p = 1/3": (XV ** 2, XV, XV ** 2 - sp.Rational(1, 9), 1, -sp.Rational(1, 9)),
+    }
+    for name, (big_p, big_q, big_r, p0, q0) in examples.items():
+        assert sp.limit(XV * big_q / big_p, XV, 0) == p0, name
+        assert sp.limit(XV ** 2 * big_r / big_p, XV, 0) == q0, name
+    # the slight change of Example 7.3.3: the first limit does not exist (it is infinite)
+    assert sp.limit(XV * (1 + XV) / XV ** 2, XV, 0, "+") == sp.oo
+    # Exercise 2(c): roots 1/2 and -1; Lebl's Exercise 7.3.10: x ln x is the second solution of a double root
+    roots = set(sp.solve(r * (r - 1) + sp.Rational(3, 2) * r - sp.Rational(1, 2), r))
+    assert roots == {sp.Rational(1, 2), -1}
+    y = XV * sp.log(XV)
+    assert sp.simplify(XV ** 2 * y.diff(XV, 2) - XV * y.diff(XV) + y) == 0
+    # Lebl, Example 7.3.4: J_0(lambda x) solves x y'' + y' + lambda^2 x y = 0
+    lam = sp.symbols("lambda", positive=True)
+    y = sp.besselj(0, lam * XV)
+    assert sp.simplify(XV * y.diff(XV, 2) + y.diff(XV) + lam ** 2 * XV * y) == 0
