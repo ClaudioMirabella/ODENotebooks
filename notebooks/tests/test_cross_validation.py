@@ -970,3 +970,139 @@ def test_the_limits_and_the_indicial_equations_of_notebook_21():
     lam = sp.symbols("lambda", positive=True)
     y = sp.besselj(0, lam * XV)
     assert sp.simplify(XV * y.diff(XV, 2) + y.diff(XV) + lam ** 2 * XV * y) == 0
+
+
+# --- numerical methods, part 2 (notebook 22; Lebl, Section 1.7) ----------------------------------------
+STEP_SYMBOL = sp.symbols("h", positive=True)          # the step, for SymPy's Taylor series
+TAYLOR_TERMS = 8                            # powers of h kept in a series
+TAYLOR_STEPS = (0.05, 0.02)                 # one step of each method against the series
+TAYLOR_AGREEMENT = 1e-6                     # relative: the series (to h^7) against the computed local error
+LEADING_STEP = 1e-3                         # a small h: local error / h^(p+1) against the leading constant
+LEADING_STEP_RK4 = 1e-2                     # (for RK4, 1e-3 would give an error of 1e-17, below the rounding)
+LEADING_AGREEMENT = 0.02                    # relative
+METHOD_ORDERS = {"euler": 1, "heun": 2, "rk4": 4}
+PENDULUM_END = 3.0                          # theta'' = -sin theta, theta(0) = 1, theta'(0) = 0, to t = 3
+PENDULUM_STEPS = (40, 80, 160, 320)
+ORDER_WINDOW = 0.1                          # an observed order on the finest steps, against the expected one
+NONLINEAR_STEP = 0.25                       # y' = -y^3 + sin t: backward Euler step by step against brentq
+NONLINEAR_END = 5.0
+BRACKET = 10.0                              # brentq looks for each value in [-10, 10]
+ROOT_DIGITS = 1e-9
+SEEDED_SYSTEMS = 10                         # seeded 2 x 2 linear systems for backward Euler
+SYSTEM_ENTRIES = (-6.0, 2.0)
+SYSTEM_STEP_COUNTS = (2, 30)                # numbers of steps on [0, 1] drawn (high excluded)
+MATRIX_AGREEMENT = 1e-10
+SYSTEM_STARTS = (-1.0, 1.0)                 # the starts drawn for the seeded systems
+ESTIMATE_TIMES = (0.0, 1.5, 3.3, 4.5)       # embedded_step from these points of y' = y cos t (|y"| not small)
+
+
+def cosine_slope(s, v):
+    return v * np.cos(s)                    # y' = y cos t, exact e^(sin t) (notebook 22)
+
+
+def one_step_series(name):
+    # the exact solution minus one step of the method, from y(0) = 1 on y' = y cos t, as a series in h
+    def f(s, v):
+        return v * sp.cos(s)
+
+    h = STEP_SYMBOL
+    k1 = f(0, 1)
+    if name == "euler":
+        step = 1 + h * k1
+    elif name == "heun":
+        step = 1 + h * (k1 + f(h, 1 + h * k1)) / 2
+    else:
+        k2 = f(h / 2, 1 + h / 2 * k1)
+        k3 = f(h / 2, 1 + h / 2 * k2)
+        k4 = f(h, 1 + h * k3)
+        step = 1 + h * (k1 + 2 * k2 + 2 * k3 + k4) / 6
+    return sp.series(sp.exp(sp.sin(h)) - step, h, 0, TAYLOR_TERMS).removeO()
+
+
+@pytest.mark.parametrize("name", sorted(METHOD_ORDERS))
+def test_local_error_against_sympys_taylor_series(name):
+    series = one_step_series(name)
+    order = METHOD_ORDERS[name]
+    assert all(series.coeff(STEP_SYMBOL, power) == 0 for power in range(order + 1))   # nothing below h^(p+1)
+    leading = float(series.coeff(STEP_SYMBOL, order + 1))
+    assert leading != 0
+    method = getattr(ol, name)
+    for h in TAYLOR_STEPS:
+        computed = ol.local_error(method, cosine_slope, 0.0, 1.0, h, lambda s: np.exp(np.sin(s)))
+        assert computed == pytest.approx(abs(float(series.subs(STEP_SYMBOL, h))), rel=TAYLOR_AGREEMENT)
+    h = LEADING_STEP_RK4 if name == "rk4" else LEADING_STEP
+    small = ol.local_error(method, cosine_slope, 0.0, 1.0, h, lambda s: np.exp(np.sin(s)))
+    assert small / h ** (order + 1) == pytest.approx(abs(leading), rel=LEADING_AGREEMENT)
+
+
+def test_euler_local_error_constant_is_half_of_y_second_derivative():
+    # Taylor: y(t + h) - y(t) - h y'(t) = (h^2 / 2) y''(t) + ...; y = e^(sin t), so y''(0) = 1
+    exact = sp.exp(sp.sin(t))
+    second = float(exact.diff(t, 2).subs(t, 0))
+    small = ol.local_error(ol.euler, cosine_slope, 0.0, 1.0, LEADING_STEP, lambda s: np.exp(np.sin(s)))
+    assert second == 1.0 and small == pytest.approx(LEADING_STEP ** 2 / 2 * second, rel=LEADING_AGREEMENT)
+
+
+@pytest.mark.parametrize("name", sorted(METHOD_ORDERS))
+def test_global_error_on_the_pendulum_against_solve_ivp(name):
+    # no formula: the reference is solve_ivp at tight tolerances (its dense output stands for exact(t))
+    def pendulum(s, u):
+        return np.array([u[1], -np.sin(u[0])])
+
+    reference = solve_ivp(pendulum, (0.0, PENDULUM_END), [1.0, 0.0], dense_output=True, **TIGHT)
+    assert reference.success
+    _, errors = ol.global_error(getattr(ol, name), pendulum, (0.0, PENDULUM_END), [1.0, 0.0],
+                                reference.sol, PENDULUM_STEPS)
+    assert ol.observed_order(errors)[-1] == pytest.approx(METHOD_ORDERS[name], abs=ORDER_WINDOW)
+
+
+def test_backward_euler_on_the_pendulum_converges_with_order_one():
+    def pendulum(s, u):
+        return np.array([u[1], -np.sin(u[0])])
+
+    reference = solve_ivp(pendulum, (0.0, PENDULUM_END), [1.0, 0.0], dense_output=True, **TIGHT)
+    _, errors = ol.global_error(ol.backward_euler, pendulum, (0.0, PENDULUM_END), [1.0, 0.0], reference.sol,
+                                PENDULUM_STEPS)
+    assert ol.observed_order(errors)[-1] == pytest.approx(1, abs=ORDER_WINDOW)
+
+
+def test_backward_euler_each_step_against_brentq():
+    brentq = pytest.importorskip("scipy.optimize").brentq
+
+    def slope(s, v):
+        return -v ** 3 + np.sin(s)
+
+    times, values = ol.backward_euler(slope, (0.0, NONLINEAR_END), 1.0, NONLINEAR_STEP)
+    previous = 1.0
+    for s, value in zip(times[1:], values[1:], strict=True):
+        # the equation of the step, solved by bisection-like brentq: Y - y_n - h f(t_(n+1), Y) = 0
+        expected = brentq(lambda v, s=s, previous=previous: v - previous - NONLINEAR_STEP * slope(s, v),
+                          -BRACKET, BRACKET)
+        assert value == pytest.approx(expected, abs=ROOT_DIGITS)
+        previous = expected
+
+
+def test_seeded_linear_systems_backward_euler_is_a_matrix_power():
+    rng = np.random.default_rng(SEED)
+    for _ in range(SEEDED_SYSTEMS):
+        matrix = rng.uniform(*SYSTEM_ENTRIES, (2, 2))
+        start = rng.uniform(*SYSTEM_STARTS, 2)
+        n = int(rng.integers(*SYSTEM_STEP_COUNTS))
+        h = 1.0 / n
+        _, values = ol.backward_euler(lambda s, u, matrix=matrix: matrix @ u, (0.0, 1.0), start, h)
+        step_matrix = np.linalg.inv(np.eye(2) - h * matrix)                    # y_(n+1) = (I - hA)^(-1) y_n
+        expected = np.linalg.matrix_power(step_matrix, n) @ start
+        assert values[-1] == pytest.approx(expected, rel=MATRIX_AGREEMENT, abs=MATRIX_AGREEMENT)
+        given = ol.backward_euler(lambda s, u, matrix=matrix: matrix @ u, (0.0, 1.0), start, h,
+                                  jacobian=lambda s, u, matrix=matrix: matrix)[1]
+        assert given[-1] == pytest.approx(expected, rel=MATRIX_AGREEMENT, abs=MATRIX_AGREEMENT)
+
+
+@pytest.mark.parametrize("start_time", ESTIMATE_TIMES)
+def test_embedded_estimate_is_half_h_squared_times_y_second_derivative(start_time):
+    # |Heun - Euler| = (h / 2)|f(t + h, y + h f) - f(t, y)| = (h^2 / 2)|y''(t)| + O(h^3), y'' from SymPy
+    exact = sp.exp(sp.sin(t))
+    second = abs(float(exact.diff(t, 2).subs(t, start_time)))
+    start = float(exact.subs(t, start_time))
+    _, estimate = ol.embedded_step(cosine_slope, start_time, start, LEADING_STEP)
+    assert estimate == pytest.approx(LEADING_STEP ** 2 / 2 * second, rel=LEADING_AGREEMENT)

@@ -80,7 +80,54 @@ RULE_J0 = "    return -a[k - 2] / k ** 2"                           # the rule o
 SERIES_CHECKS = "the computer disagrees with the table above"
 AIRY_SENTENCE = ("the series disagree with SciPy: put back the 40 coefficients and the points 1, 2, -3 "
                  "of the text")
+NAME_22 = "22_Numerical_Methods.ipynb"
+MIDPOINT_STEP = "    return y + h * f(t + h / 2, y + h / 2 * f(t, y))"          # Exercise 3, the answer
+MIDPOINT_AS_EULER = "    return y + h * f(t, y)"                    # Euler's step, a taught mistake
+STEP_STOPPED = "Exercise 3: not yet (your step stopped with an error: "
+RATE_2C = "    return None                       # replace None with the right side of y' = -2 t y"
+K1_LINE = "    k1 = None                   # replace None with the slope at the start, f(t, y)"
 EXERCISES = {
+    NAME_22: {
+        "answers": {
+            "my_order_1a = None": "my_order_1a = 3",
+            "my_steps_1b = None": "my_steps_1b = 200",
+            "my_stable_003 = None": "my_stable_003 = True",
+            "my_stable_005 = None": "my_stable_005 = False",
+            "my_higher_1d = None": "my_higher_1d = False",
+            "my_euler_2a = None": "my_euler_2a = 1",
+            "my_local_2a = None": "my_local_2a = 1 - np.exp(-0.01)",
+            "my_taylor_2a = None": "my_taylor_2a = 0.01",
+            "my_euler_2b = None": "my_euler_2b = -0.5",
+            "my_backward_2b = None": "my_backward_2b = 0.4",
+            "my_sign_2b = None": 'my_sign_2b = "backward Euler"',
+            "my_order_2c = None": "my_order_2c = 2.04",
+            RATE_2C: "    return -2 * t * y",
+            FILL_IN: MIDPOINT_STEP,
+        },
+        "solved": ("Exercise 1a: correct", "Exercise 1b: correct", "Exercise 1c, h = 0.03: correct",
+                   "Exercise 1c, h = 0.05: correct", "Exercise 1d: correct", "Exercise 2a, y_1: correct",
+                   "Exercise 2a, local error: correct", "Exercise 2a, Taylor: correct",
+                   "Exercise 2b, Euler: correct", "Exercise 2b, backward Euler: correct",
+                   "Exercise 2b, the sign: correct", "Exercise 2c: correct", "observed order: 2.04",
+                   "Exercise 3: correct (global order 1.99, local order 2.98)"),
+        "unsolved": ("Exercise 1a: no answer yet", "Exercise 1d: no answer yet", "Exercise 2c: no answer yet",
+                     "Exercise 2b, the sign: no answer yet",
+                     "Exercise 3: no answer yet (complete midpoint_step)"),
+        "wrong": ({"my_order_1a = None": "my_order_1a = 8",                       # the factor, not the order
+                   "my_steps_1b = None": "my_steps_1b = 100",                     # as for order 2
+                   "my_stable_003 = None": "my_stable_003 = False",
+                   "my_stable_005 = None": "my_stable_005 = True",
+                   "my_higher_1d = None": "my_higher_1d = True",
+                   "my_euler_2a = None": "my_euler_2a = 0.99",
+                   "my_local_2a = None": "my_local_2a = 0.1",
+                   "my_taylor_2a = None": "my_taylor_2a = -0.01",                 # the sign of y''(0)
+                   "my_euler_2b = None": "my_euler_2b = 0.5",
+                   "my_backward_2b = None": "my_backward_2b = -2",                # a sign
+                   "my_sign_2b = None": 'my_sign_2b = "Euler"',
+                   "my_order_2c = None": "my_order_2c = 2.46",                    # from N = 10 to 20
+                   FILL_IN: MIDPOINT_AS_EULER},
+                  "Exercise 3: not yet (this is Euler's step"),
+    },
     NAME_21: {
         "answers": {
             "my_radius_1a = None": "my_radius_1a = 2",
@@ -1300,6 +1347,88 @@ def test_notebook_21_a_number_below_the_initial_values_stops_with_the_library_se
     assert sentence in str(stopped.value)
 
 
+@pytest.mark.parametrize("answers, message", [
+    # other accepted forms
+    ({"my_local_2a = None": "my_local_2a = 0.00995"}, "Exercise 2a, local error: correct"),
+    ({"my_order_2c = None": "my_order_2c = 2.04"}, "Exercise 2c: correct"),
+    ({"my_backward_2b = None": "my_backward_2b = 1 / 2.5"}, "Exercise 2b, backward Euler: correct"),
+    ({"my_sign_2b = None": 'my_sign_2b = " Backward euler "'}, "Exercise 2b, the sign: correct"),
+    ({FILL_IN: "    return y + h * f(t + 0.5 * h, y + 0.5 * h * f(t, y))"}, "Exercise 3: correct"),
+    ({K1_LINE: "    k1 = f(t, y)", FILL_IN: "    return y + h * f(t + h / 2, y + h / 2 * k1)"},
+     "Exercise 3: correct"),
+    ({"my_order_2c = None": "my_order_2c = np.array([2.0419])"}, "Exercise 2c: correct"),
+    ({"my_order_2c = None": "my_order_2c = [2.04]"}, "Exercise 2c: correct"),          # re-check N3
+    ({"my_order_2c = None": "my_order_2c = 2.03"}, "Exercise 2c: not yet (close: copy the number"),
+    # wrong answers, each with its message
+    ({"my_order_1a = None": "my_order_1a = 8"}, "Exercise 1a: not yet (8 is the factor"),
+    ({"my_order_1a = None": "my_order_1a = 2"}, "Exercise 1a: not yet (your value 2, try again)"),
+    ({"my_order_1a = None": "my_order_1a = 2.97"}, "Exercise 1a: not yet (an order is a whole number"),
+    ({"my_order_2c = None": "my_order_2c = 2"}, "Exercise 2c: not yet (2 is the order Heun should have"),
+    ({"my_steps_1b = None": "my_steps_1b = 100"}, "Exercise 1b: not yet (that would be a method of order 2"),
+    ({"my_steps_1b = None": 'my_steps_1b = "200"'}, "Exercise 1b: not yet (type your answer without quotes"),
+    ({"my_local_2a = None": "my_local_2a = 0.01"},
+     "Exercise 2a, local error: not yet (your value 0.01 is close"),
+    ({"my_taylor_2a = None": "my_taylor_2a = -0.01"},
+     "Exercise 2a, Taylor: not yet (the size: take |y''(0)|"),
+    ({"my_backward_2b = None": "my_backward_2b = -2"}, "Exercise 2b, backward Euler: not yet (a sign"),
+    ({"my_sign_2b = None": 'my_sign_2b = "Euler"'}, "Exercise 2b, the sign: not yet, try again"),
+    ({"my_sign_2b = None": 'my_sign_2b = "implicit"'},
+     "Exercise 2b, the sign: not yet (not one of the words"),
+    ({"my_sign_2b = None": "my_sign_2b = backward"}, None),          # a NameError: only that cell stops
+    ({"my_order_2c = None": "my_order_2c = 2.46"}, "Exercise 2c: not yet (your value 2.46, try again)"),
+    ({FILL_IN: MIDPOINT_AS_EULER}, "Exercise 3: not yet (this is Euler's step: take the slope at the middle"),
+    ({FILL_IN: "    return y + h * f(t + h / 2, y)"}, "Exercise 3: not yet (your step has global order 0.99"),
+    ({FILL_IN: "    return y + h * g(t, y)"}, STEP_STOPPED + "NameError"),
+    ({FILL_IN: '    return "y + h * f(t, y)"'}, STEP_STOPPED + "ValueError"),
+])
+def test_notebook_22_particular_answers(answers, message):
+    if message is None:                                        # the answer line itself stops its cell
+        with pytest.raises(nbclient.exceptions.CellExecutionError, match="NameError"):
+            execute(with_answers(NAME_22, answers))
+        return
+    try:
+        text = printed(execute(with_answers(NAME_22, answers)))
+    except Exception as problem:                               # a wrong answer must never stop the notebook
+        pytest.fail(f"the notebook stopped: {str(problem)[-300:]}")
+    assert message in text
+
+
+def test_notebook_22_sections_can_be_run_again_after_the_exercises():
+    # no global name of the sections is redefined by an exercise
+    nb = with_answers(NAME_22, EXERCISES[NAME_22]["answers"])
+    again = [cell.source for cell in nb.cells if cell.cell_type == "code"
+             and "import odelib as ol" not in cell.source and "interact(" not in cell.source]
+    nb.cells.extend(nbformat.v4.new_code_cell(source) for source in again)
+    text = printed(execute(nb))
+    assert text.count("Exercise 3: correct") == 2 and text.count("Exercise 2c: correct") == 2
+    assert text.count("Euler: below 0.01 from N = 4225 on") == 2
+
+
+@pytest.mark.parametrize("changes, line", [
+    # the number that a comment invites a student to change: no bare AssertionError
+    ({"TOLERANCE = 1e-3 ": "TOLERANCE = 1e-4 "}, "391 steps kept, 105 refused"),
+    ({"TOLERANCE = 1e-3 ": "TOLERANCE = 1e-10 "}, "stopped at t = "),                 # code review 6
+])
+def test_notebook_22_survives_the_numbers_a_student_changes(changes, line):
+    try:
+        text = printed(execute(with_answers(NAME_22, changes)))
+    except Exception as problem:
+        pytest.fail(f"the notebook stopped: {str(problem)[-300:]}")
+    assert line in text
+
+
+@pytest.mark.parametrize("changes, sentence", [
+    # the numbers of the text: a cell that checks them stops with a sentence, not with a bare AssertionError
+    ({'ANSWER_1 = {"Euler": 4225, ': 'ANSWER_1 = {"Euler": 4200, '},
+     "slider 1: the answer is not as the text says"),
+    ({"NEAR, FAR = 0.01, 1.0": "NEAR, FAR = 1e-6, 1.0"}, "slider 2: backward Euler is not as the text says"),
+])
+def test_notebook_22_cells_of_the_text_stop_with_a_sentence(changes, sentence):
+    with pytest.raises(nbclient.exceptions.CellExecutionError, match="AssertionError") as stopped:
+        execute(with_answers(NAME_22, changes))
+    assert sentence in str(stopped.value)
+
+
 def test_is_exact_written_with_an_equation_gets_a_hint_not_a_traceback():
     name = "12_Exact_Equations.ipynb"
     text = printed(execute(with_answers(name, {FILL_IN: "    return sp.Eq(sp.diff(M, y), sp.diff(N, x))"})))
@@ -1408,6 +1537,11 @@ def test_an_error_still_stops_a_notebook_that_uses_the_library():
 # Slider functions at the ends of their sliders: the cases that used to stop with a traceback
 # or draw an empty picture (review of 2026-11-17). Each line is run in a cell added at the end.
 EXTREMES = {
+    NAME_22: ("plot_spring(n=5)", "plot_spring(n=5000)", "plot_spring(n=50)", "plot_spring(n=4225)",
+              "plot_spring(n=6)", "plot_stiff(h=0.005)", "plot_stiff(h=0.1)", "plot_stiff(h=0.015)",
+              "plot_stiff(h=0.005 + 19 * 0.005)",                    # 0.1 as the slider gives it
+              "plot_stiff(h=0.005 + 3 * 0.005)", "plot_stiff(h=0.02)",          # Euler's factor -1
+              "plot_stiff(h=0.005 + 5 * 0.005)"),                    # 0.03, the question of the slider
     NAME_21: ("plot_bump(n=1)", "plot_bump(n=30)", "plot_bump(n=5)", "plot_bump(n=2)",
               "plot_bessel(n=1)", "plot_bessel(n=30)", "plot_bessel(n=10)", "plot_bessel(n=19)",
               "plot_bessel(n=20)"),

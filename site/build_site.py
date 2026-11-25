@@ -63,6 +63,7 @@ READING_ORDER = (
     ("Week 12 - The Laplace transform (Sessions 23-24)", ("19",)),
     ("Week 13 - Steps, impulses, and convolution (Sessions 25-26)", ("20",)),
     ("Week 14 - Series solutions (Sessions 27-28)", ("21",)),
+    ("Week 15 - Numerical methods, part 2 (Session 29)", ("22",)),
 )
 UNPLACED_HEADING = "More notebooks"         # anything new that READING_ORDER does not mention yet
 EXTRA_FILES = ("odelib.py",)

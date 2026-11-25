@@ -204,6 +204,7 @@ home page, by week.
 | 19 | [The Laplace transform](19_Laplace_Transform.ipynb) | $F(s) = \int_0^\infty e^{-st}f(t)\,dt$ | 23-24 | 6.1, 6.2 |
 | 20 | [Steps, impulses, and convolution](20_Steps_Impulses_Convolution.ipynb) | $(f * g)(t) = \int_0^t f(\tau)\,g(t - \tau)\,d\tau$ | 25-26 | 6.2-6.4 |
 | 21 | [Series solutions](21_Series_Solutions.ipynb) | $y = \sum_{k} a_kx^k$; $y = x^r\sum_{k} a_kx^k$ | 27-28 | 7.1-7.3 |
+| 22 | [Numerical methods, part 2](22_Numerical_Methods.ipynb) | $y_{n+1} = y_n + h\,f(t_{n+1}, y_{n+1})$ | 29 | 1.7, 3.1 |
 
 The **course text** is J. Lebl, *Notes on Diffy Qs: Differential Equations for Engineers*, free
 on LibreTexts; the section numbers above are those of that edition.

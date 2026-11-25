@@ -68,6 +68,10 @@ Series solutions (notebook 21)
     series_coefficients           a_0, ..., a_(n-1) of a power series, from a recurrence (Lebl 7.2, 7.3)
     series_value                  the partial sum of a power series at x, by Horner's rule (Lebl 7.1)
     indicial_roots                the roots of r(r - 1) + p0 r + q0 = 0 and their case (Lebl 7.3)
+Numerical methods, part 2 (notebook 22)
+    local_error, global_error     the error of one step; the error at the end for several N (Lebl 1.7)
+    backward_euler                the implicit Euler method, by Newton's method at each step
+    embedded_step                 Heun's step and the estimate |Heun - Euler| of Euler's error
 Exercises
     check                         compare an answer found by hand with the expected one
     check_formula                 the same for a formula typed as a SymPy expression
@@ -94,6 +98,7 @@ STEP_START, CONVOLUTION_RTOL, CONVOLUTION_PIECES, CONVOLUTION_SCAN, CONVOLUTION_
 CONVOLUTION_JUMP_RATIO, CONVOLUTION_MAX_JUMPS, CONVOLUTION_NARROW,
 SERIES_CENTER, INDICIAL_NOT_INTEGER, INDICIAL_DOUBLE, INDICIAL_INTEGER, INDICIAL_COMPLEX,
 INDICIAL_TOLERANCE, INDICIAL_AMBIGUOUS,
+NEWTON_TOLERANCE, NEWTON_MAX_ITERATIONS, BACKWARD_MAX_STEPS,
 CHECK_TOLERANCE, ROUNDED, FORMULA_SAMPLES,
 RESIDUAL_ROUNDING, PORTRAIT_WORDS, STABILITY_WORDS, KIND_SYNONYMS; the guide and the hints:
 GUIDE_START, GUIDE_TYPING, GUIDE_TYPING_RULE, GUIDE_ERRORS, GUIDE_HOW, GUIDE_WORDS, GUIDE_TOPICS,
@@ -2533,6 +2538,331 @@ def indicial_roots(p0: float, q0: float) -> tuple[float | complex, float | compl
     with np.errstate(over="ignore", invalid="ignore"):
         integer = bool(abs(squared - whole ** 2) <= band)
     return r1, r2, INDICIAL_INTEGER if integer else INDICIAL_NOT_INTEGER
+
+
+# ---------------------------------------------------------------------------
+# Numerical methods, part 2 (notebook 22; Lebl, Section 1.7)
+# ---------------------------------------------------------------------------
+# Conventions: t is the independent variable (Lebl writes x in Section 1.7, as notebook 04 does), h the
+# step, N the number of steps. A "method" is euler, heun or rk4 above, or a function of a student with the
+# same call, method(f, t_span, y0, h) -> (t, y). The error of a system is its largest component (the
+# largest of the absolute errors of the unknowns), unless one component is asked for.
+# Backward Euler solves an equation at each step by Newton's method, which stops when a correction is
+# below NEWTON_TOLERANCE max(1, |y|) (about six digits above the rounding of the computer), and gives up
+# with a ValueError after NEWTON_MAX_ITERATIONS corrections (Newton's method usually needs two to five).
+NEWTON_TOLERANCE = 1e-10
+NEWTON_MAX_ITERATIONS = 50
+# Each step of backward_euler costs several evaluations of f and a linear solve, about 7 times a step of
+# euler: its own, smaller limit of steps keeps the browser from freezing (MAX_STEPS is sized for euler).
+BACKWARD_MAX_STEPS = 100_000
+
+
+def _state(name: str, value: ArrayLike) -> np.ndarray:
+    """A number or a list of numbers as a flat array of finite floats (at least one), or a ValueError."""
+    try:
+        values = _real_array(name, value)
+    except ValueError:
+        values = None
+    if values is None or values.ndim > 1 or values.size == 0 or not bool(np.all(np.isfinite(values))):
+        raise ValueError(f"{name} must be a finite real number, or a list of them (one for each unknown), "
+                         f"got {value!r}")
+    return np.atleast_1d(values)
+
+
+def _slope_at(f: RHS, t: float, y: np.ndarray) -> np.ndarray:
+    """f(t, y) as a float array of y.size finite numbers, or a ValueError that names t."""
+    with np.errstate(all="ignore"):                       # a value that is not finite is reported below
+        result = f(t, y.copy())
+    try:
+        values = np.asarray(result, dtype=float)
+    except (TypeError, ValueError):
+        values = None
+    if values is None or values.size != y.size:
+        raise ValueError(f"f(t, y) must return {y.size} number(s), one for each unknown; got {result!r} at "
+                         f"t = {t:.6g}")
+    values = values.reshape(y.shape)
+    if not bool(np.all(np.isfinite(values))):
+        raise ValueError(f"f(t, y) is not a finite number at t = {t:.6g} (y = {y})")
+    return values
+
+
+def _exact_at(exact: Callable[[float], ArrayLike], t: float, size: int, component: int | None) -> np.ndarray:
+    """The exact solution at t, as the components that are compared (all, or the one asked for)."""
+    result = exact(t)                                     # (an error inside exact is its own message)
+    try:
+        values = np.atleast_1d(np.asarray(result, dtype=float))
+    except (TypeError, ValueError):
+        values = None
+    if values is None or values.ndim != 1 or values.size != size or not bool(np.all(np.isfinite(values))):
+        raise ValueError(f"exact(t) must return {size} finite number(s), one for each unknown, at "
+                         f"t = {t:.6g}")
+    return values if component is None else values[component:component + 1]
+
+
+def _component(component: int | None, size: int) -> int | None:
+    """The index of the component to compare (None: all of them), or a ValueError."""
+    if component is None:
+        return None
+    whole = isinstance(component, (int, np.integer)) and not isinstance(component, (bool, np.bool_))
+    if not whole or not 0 <= component < size:
+        raise ValueError(f"component must be None or a whole number from 0 to {size - 1} (0 for the first "
+                         f"unknown), got {component!r}")
+    return int(component)
+
+
+def _start_on_exact(y0: np.ndarray, exact: Callable[[float], ArrayLike], t0: float) -> None:
+    """A ValueError when y0 is not the exact value at t0 (within CHECK_TOLERANCE, as check)."""
+    at_start = _exact_at(exact, t0, y0.size, None)
+    if not np.allclose(y0, at_start, rtol=CHECK_TOLERANCE, atol=CHECK_TOLERANCE):
+        raise ValueError(f"y0 must be the exact value at t0 = {t0:.6g}, exact(t0) = {at_start}; got {y0}")
+
+
+def _last_value(method: Callable, f: RHS, t_span: tuple[float, float], y0: np.ndarray,
+                h: float) -> np.ndarray:
+    """The last value of method(f, t_span, y0, h), as a flat float array of y0.size numbers.
+
+    The method's own errors (its sentences on the grid, an overflow, an error in a student's function) are
+    not caught: they say what went wrong. Only a result of the wrong form is reported here.
+    """
+    result = method(f, t_span, y0 if y0.size > 1 else float(y0[0]), h)
+    try:
+        values = np.asarray(result[1], dtype=float)
+        last = np.atleast_1d(values[-1]).ravel() if values.ndim > 0 else None
+    except (TypeError, IndexError, KeyError, ValueError):
+        last = None
+    if last is None or last.size != y0.size:
+        raise ValueError("method must be called as method(f, t_span, y0, h) and return (t, y), as ol.euler, "
+                         "ol.heun and ol.rk4 do")
+    return last
+
+
+def local_error(method: Callable, f: RHS, t0: float, y0: ArrayLike, h: float,
+                exact: Callable[[float], ArrayLike], *, component: int | None = None) -> float:
+    """The error of ONE step of ``method``, started on the exact solution: |y_1 - exact(t0 + h)|.
+
+    Lebl, Section 1.7 (Euler's method and its error), used in notebook 22. ``method`` is ol.euler, ol.heun,
+    ol.rk4, or a function with the same call, method(f, t_span, y0, h) -> (t, y). y0 must be the exact
+    value exact(t0) (within CHECK_TOLERANCE), so that the step starts on the solution and only the error
+    of this one step is measured: the **local error**. ``exact(t)`` returns the exact solution at t (a
+    number, or one number for each unknown of a system). For a system the result is the largest of the
+    errors of the unknowns; with ``component=j`` only the error of unknown j (0 for the first).
+
+    What is promised, and what is not:
+      * A method of order p has a local error of size about h^(p+1) for small h (Euler: (h^2/2)|y''|,
+        from Taylor's formula): halving h divides it by about 2^(p+1). This is a statement for small h;
+        for a large h, or near the rounding of the computer (errors near 1e-15), the ratios are not those.
+      * The error is measured at t0 + h only, not along the step.
+
+    ValueError: method, f or exact that is not a function; t0 that is not one finite real number; h that
+    is not a positive number; y0 that is not made of finite real numbers, or is not exact(t0); exact(t)
+    returning the wrong number of values; component out of range; a method that does not return (t, y).
+    The method's own errors are not caught (its sentences, a FloatingPointError on overflow).
+    """
+    for name, function in (("method", method), ("f", f), ("exact", exact)):
+        if not callable(function):
+            raise ValueError(f"{name} must be a function, got {function!r}")
+    t0 = _one_real_number("t0", t0)
+    h = _require_positive("h", _one_real_number("h", h))
+    start = _state("y0", y0)
+    which = _component(component, start.size)
+    _start_on_exact(start, exact, t0)
+    last = _last_value(method, f, (t0, t0 + h), start, h)
+    target = _exact_at(exact, t0 + h, start.size, which)
+    compared = last if which is None else last[which:which + 1]
+    return float(np.max(np.abs(compared - target)))
+
+
+def global_error(method: Callable, f: RHS, t_span: tuple[float, float], y0: ArrayLike,
+                 exact: Callable[[float], ArrayLike], steps: Sequence[int], *,
+                 component: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """The error at the end, |y_N - exact(t1)|, for each number of steps N in ``steps``: a convergence study.
+
+    Lebl, Section 1.7 (Table 1.7.1: the error at x = 2 as h is halved), used in notebook 22. For each N,
+    h = (t1 - t0) / N and ``method`` (ol.euler, ol.heun, ol.rk4 or a function with the same call) is run
+    from t0 to t1; the error is the **global error** at t1, where the errors of all the steps have added
+    up. y0 must be the exact value exact(t0) (within CHECK_TOLERANCE). For a system the error is the
+    largest of the errors of the unknowns; with ``component=j`` only the error of unknown j (0 for the
+    first). Returns (h values, errors), two float arrays in the order of ``steps``: ready for a log-log
+    plot, and for ``observed_order(errors, ratio)`` when each N is ``ratio`` times the one before.
+
+    What is promised, and what is not:
+      * A method of order p has a global error of size about h^p for small h: halving h divides it by about
+        2^p. The observed orders approach p only as h becomes small, and only while the step is stable and
+        the error is far above the rounding of the computer (for RK4 on y' = y cos t the ratios are off
+        below about 1e-13 and the errors stop falling near 1e-15: notebook 22, Exercise 4(i)).
+      * An error that is exactly 0 (a method that is exact on this equation) cannot go into observed_order.
+
+    ValueError: method, f or exact that is not a function; t_span that is not t0 < t1, finite; y0 that is
+    not made of finite real numbers, or is not exact(t0); steps that are not whole numbers from 1 to
+    MAX_STEPS (at least one); exact(t) returning the wrong number of values; component out of range; a
+    method that does not return (t, y). The method's own errors are not caught (its sentences, a
+    FloatingPointError on overflow).
+    """
+    for name, function in (("method", method), ("f", f), ("exact", exact)):
+        if not callable(function):
+            raise ValueError(f"{name} must be a function, got {function!r}")
+    try:
+        t0, t1 = (_one_real_number("t0", t_span[0]), _one_real_number("t1", t_span[1]))
+        extra = len(t_span) != 2
+    except (TypeError, IndexError, KeyError):
+        t0 = t1 = 0.0
+        extra = True
+    if extra or t1 <= t0:
+        raise ValueError(f"t_span must be two finite numbers (t0, t1) with t0 < t1, got {t_span!r}")
+    start = _state("y0", y0)
+    which = _component(component, start.size)
+    advice = (f"steps must be a list of whole numbers of steps N from 1 to {MAX_STEPS}, such as "
+              f"[10, 20, 40], got {steps!r}")
+    try:
+        counts = list(steps)
+    except TypeError:
+        raise ValueError(advice) from None
+    whole = all(isinstance(n, (int, np.integer)) and not isinstance(n, (bool, np.bool_)) for n in counts)
+    if not counts or not whole or not all(1 <= n <= MAX_STEPS for n in counts):
+        raise ValueError(advice)
+    _start_on_exact(start, exact, t0)
+    target = _exact_at(exact, t1, start.size, which)
+    sizes, errors = [], []
+    for n in counts:
+        h = (t1 - t0) / int(n)
+        last = _last_value(method, f, (t0, t1), start, h)
+        compared = last if which is None else last[which:which + 1]
+        sizes.append(h)
+        errors.append(float(np.max(np.abs(compared - target))))
+    return np.array(sizes, dtype=float), np.array(errors, dtype=float)
+
+
+def _newton_matrix(f: RHS, jacobian: Callable | None, t: float, y: np.ndarray, h: float) -> np.ndarray:
+    """I - h J, with J the matrix of the derivatives of f(t, y) in y: given, or by central differences."""
+    size = y.size
+    if jacobian is not None:
+        result = jacobian(t, y.copy())                # (an error inside jacobian is its own message)
+        try:
+            given = np.asarray(result, dtype=float)
+        except (TypeError, ValueError):
+            given = None
+        if given is None or given.size != size * size or not bool(np.all(np.isfinite(given))):
+            raise ValueError(f"jacobian(t, y) must return {size} x {size} finite number(s) (the derivatives "
+                             f"of f in y) at t = {t:.6g}")
+        derivatives = given.reshape(size, size)
+    else:
+        columns = []
+        for j in range(size):
+            step = JACOBIAN_STEP * max(1.0, abs(y[j]))
+            plus, minus = y.copy(), y.copy()
+            plus[j] += step
+            minus[j] -= step
+            columns.append((_slope_at(f, t, plus) - _slope_at(f, t, minus)) / (2 * step))
+        derivatives = np.column_stack(columns)
+    return np.eye(size) - h * derivatives
+
+
+def _backward_euler_step(f: RHS, jacobian: Callable | None, t: float, y: np.ndarray, h: float) -> np.ndarray:
+    """y_(n+1), the solution Y of Y = y_n + h f(t + h, Y), by Newton's method from Euler's guess."""
+    t_next = t + h
+    guess = y + h * _slope_at(f, t, y)                    # Euler's step: the first guess
+    for _ in range(NEWTON_MAX_ITERATIONS):
+        residual = guess - y - h * _slope_at(f, t_next, guess)
+        try:
+            correction = np.linalg.solve(_newton_matrix(f, jacobian, t_next, guess, h), residual)
+        except np.linalg.LinAlgError:
+            raise ValueError(f"backward Euler: the equation of the step to t = {t_next:.6g} cannot be solved "
+                             "(the matrix I - h J is singular): try another h") from None
+        with np.errstate(over="ignore", invalid="ignore"):
+            guess = guess - correction
+        if not bool(np.all(np.isfinite(guess))):
+            raise ValueError(f"backward Euler: the values became too large for the computer in the step to "
+                             f"t = {t_next:.6g} (blow-up of the solution, or a step too large for Newton's "
+                             "method): try a smaller h")
+        if np.max(np.abs(correction)) <= NEWTON_TOLERANCE * max(1.0, float(np.max(np.abs(guess)))):
+            return guess
+    raise ValueError(f"backward Euler: Newton's method did not converge in the step to t = {t_next:.6g} "
+                     f"({NEWTON_MAX_ITERATIONS} corrections): try a smaller h")
+
+
+def backward_euler(f: RHS, t_span: tuple[float, float], y0: ArrayLike, h: float,
+                   jacobian: Callable | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """Backward (implicit) Euler y_(n+1) = y_n + h f(t_(n+1), y_(n+1)): the slope at the END of the step.
+
+    Notebook 22 (Lebl, Section 1.7, names stiff problems; A. Meseguer, Fundamentals of Numerical
+    Mathematics for Physicists and Engineers, Section 8.2). y_(n+1) appears on both sides, so each step
+    solves an equation for it: by Newton's method, started from Euler's step, with the matrix of the
+    derivatives of f in y given by ``jacobian(t, y)`` (an n x n array; a number for one equation) or, when
+    it is None, computed by central differences with the step JACOBIAN_STEP max(1, |y_j|). Newton stops
+    when a correction is below NEWTON_TOLERANCE max(1, |y|). Same grid and same result as ol.euler: the
+    times t0, t0 + h, ..., t1 (a whole number of steps), and (t, y), y a 1-D array for one equation and
+    an array of shape (N + 1, n) for a system of n equations.
+
+    What is promised, and what is not:
+      * Order 1, like Euler: halving h halves the error. It is not more accurate than Euler; it is more
+        stable. On the test equation y' = lambda y it multiplies by 1 / (1 - h lambda) at each step, which
+        is less than 1 in size for every h > 0 when lambda < 0: the values decay, as the solution does,
+        whatever the step (Euler multiplies by 1 + h lambda and grows when h > 2 / |lambda|).
+      * Forward in time only (t0 < t1), as euler.
+      * For a growing solution (lambda > 0) it is not stable in this sense: with h lambda = 1 the equation
+        of the step cannot be solved (reported as singular, or as Newton not converging when the
+        derivatives are computed by differences), and with h lambda > 1 the values change sign at every
+        step.
+      * Newton's method can fail for a strongly nonlinear f and a large h: then a ValueError names the
+        time; a smaller h helps.
+      * At most BACKWARD_MAX_STEPS steps (each costs about 7 steps of euler).
+
+    ValueError: f (or jacobian) that is not a function; the grid rules of euler (t0 < t1, finite, h > 0,
+    a whole number of steps), and at most BACKWARD_MAX_STEPS steps; y0 that is not made of finite real
+    numbers; f(t, y) or jacobian(t, y) returning the wrong number of values, or values that are not
+    finite (the sentence names t); Newton's method not converging, or values too large for the computer
+    (the sentence names t). An error raised inside f or jacobian is not caught: it is its own message.
+    """
+    if not callable(f):
+        raise ValueError(f"f must be a function of t and y, got {f!r}")
+    if jacobian is not None and not callable(jacobian):
+        raise ValueError(f"jacobian must be None or a function of t and y, got {jacobian!r}")
+    t = _grid(t_span, h)
+    if t.size - 1 > BACKWARD_MAX_STEPS:
+        raise ValueError(f"too many steps ({t.size - 1}, the limit of backward_euler is "
+                         f"{BACKWARD_MAX_STEPS}): use a larger step h")
+    start = _state("y0", y0)
+    y = np.empty((t.size, start.size))
+    y[0] = start
+    step = float(h)
+    for i in range(t.size - 1):
+        y[i + 1] = _backward_euler_step(f, jacobian, t[i], y[i], step)
+    return t, (y[:, 0] if y.shape[1] == 1 else y)
+
+
+def embedded_step(f: RHS, t: float, y: ArrayLike, h: float) -> tuple[float | np.ndarray, float]:
+    """One step of Heun's method and an estimate of the error of Euler's step: (Heun's value, |Heun - Euler|).
+
+    Notebook 22: the idea of the step control of scipy's solve_ivp, shown with the simplest pair. From the
+    point (t, y) both methods use the slope k_1 = f(t, y); Euler's step is y + h k_1, and Heun's adds the
+    slope k_2 = f(t + h, y + h k_1) at the end, y + h (k_1 + k_2) / 2 (Lebl, the improved Euler of the
+    exercises of Section 1.7). Heun's value is far more accurate for small h, so the difference of the
+    two, (h / 2) |k_2 - k_1|, estimates the local error of Euler's step. Returns (Heun's value, the
+    estimate): the value is a float for one equation and an array for a system; the estimate is the
+    largest of its components.
+
+    What is promised, and what is not:
+      * The estimate is of Euler's error, not of Heun's: for small h a solver that keeps Heun's value with
+        Euler's estimate is on the safe side (Heun's error is of size h^3, the estimate of size h^2); for a
+        large h it is not (the estimate can even be 0).
+      * It is an estimate, close to the true local error of Euler only for small h (notebook 22 checks it
+        on y' = y cos t); for a large h it can be far off in either direction.
+
+    ValueError: f that is not a function; t that is not one finite real number; h that is not a positive
+    number; y that is not made of finite real numbers; f(t, y) returning the wrong number of values, or
+    values that are not finite (the sentence names t).
+    """
+    if not callable(f):
+        raise ValueError(f"f must be a function of t and y, got {f!r}")
+    t = _one_real_number("t", t)
+    h = _require_positive("h", _one_real_number("h", h))
+    start = _state("y", y)
+    first = _slope_at(f, t, start)
+    euler_value = start + h * first
+    second = _slope_at(f, t + h, euler_value)
+    heun_value = start + h * (first + second) / 2
+    estimate = float(np.max(np.abs(heun_value - euler_value)))
+    return (float(heun_value[0]) if heun_value.size == 1 and np.ndim(y) == 0 else heun_value), estimate
 
 
 # ---------------------------------------------------------------------------

@@ -3336,3 +3336,370 @@ def test_series_functions_leave_warnings_and_numpy_settings_alone():
     assert (ol.INDICIAL_NOT_INTEGER, ol.INDICIAL_DOUBLE, ol.INDICIAL_INTEGER, ol.INDICIAL_COMPLEX) == (
         "two real roots, difference not a whole number", "double root",
         "two real roots, difference a whole number", "complex roots")
+
+
+# --- numerical methods, part 2 (notebook 22; Lebl, Section 1.7) ------------------------------------------
+TABLE_1_7_1_ERRORS = (1.07407, 0.79139, 0.52751, 0.31966, 0.17960, 0.09588, 0.04965, 0.02528)
+TABLE_1_7_1_RATIOS = (0.73681, 0.66656, 0.60599, 0.56184, 0.53385, 0.51779, 0.50913)
+TABLE_DECIMALS = 1e-5                       # the book prints five decimals
+TABLE_STEPS = (2, 4, 8, 16, 32, 64, 128, 256)          # N on [0, 2]: h = 1, 1/2, ..., 1/128
+EXERCISE_1_7_7 = ((1, 2, 4), (16.0, 8.0, 4.0))          # Euler for x' = 2t to t = 4: steps, printed errors
+COSINE_START = 1.0                          # notebook 22: y' = y cos t, y(0) = 1, exact y = e^(sin t)
+COSINE_END = 4.0                            # its convergence study ends at T = 4
+COSINE_SPAN = (0.0, COSINE_END)
+LOCAL_STEPS = (0.2, 0.1, 0.05, 0.025)       # plan 22: the local errors of one step from t = 0
+LOCAL_EULER = (1.978e-2, 4.987e-3, 1.249e-3, 3.125e-4)  # Euler's, printed to 4 digits
+GLOBAL_STEPS = (10, 20, 40, 80, 160)        # plan 22: the global errors at T = 4
+GLOBAL_EULER = (7.814e-2, 3.281e-2, 1.511e-2, 7.251e-3, 3.553e-3)
+PRINTED_DIGITS = 1e-3                       # relative: four printed digits
+ORDER_DIGITS = 0.05                         # an observed order against the expected one, on the finest steps
+SPRING_RATE = 4.0                           # notebook 22: x'' + 4x = 0, x(0) = 1, x'(0) = 0, x = cos 2t
+SPRING_END = 5.0                            # the error of x at T = 5
+SPRING_STEPS = (25, 50, 100, 200, 400, 800)
+SPRING_ERRORS = {"euler": (5.530, 5.441e-2), "heun": (0.1069, 1.396e-4), "rk4": (5.080e-4, 1.089e-9)}
+SPRING_PERIODS = 2.0 * np.pi                # notebook 22: Euler's amplitude after t = 2 pi with N = 40 steps
+SPRING_PERIOD_STEPS = 40
+SPRING_AMPLITUDE = (6.57, 0.01)             # Euler's amplitude there, and its printed digits
+STIFF_RATE = 100.0                          # notebook 22: y' = -100 (y - sin t), y(0) = 1
+STIFF_STEPS = ((0.015, -0.5), (0.025, -1.5), (0.03, -2.0))   # Euler's factor 1 - 100 h of the gap
+BACKWARD_END = 1.0
+BACKWARD_H = (0.5, 0.1, 0.05, 0.02, 0.01)
+LARGE_PRODUCTS = (-10.0, -100.0, -1e4, -1e6)    # lambda h for the stability test of backward Euler
+CLOSED_FORM = 1e-12                         # a recurrence of the notebook against its closed form (relative)
+EMBEDDED_H = (0.1, 0.01, 0.001)             # the estimate against Euler's true local error on y' = y cos t
+EMBEDDED_SHARE = (0.15, 0.02, 0.002)        # |estimate / true - 1| below these
+SEEDED_CASES = 20                           # seeded linear equations
+SEEDED_RATES = (-5.0, 2.0)                  # lambda drawn in this range
+SEEDED_STARTS = (-3.0, 3.0)                 # y0 drawn in this range
+SEEDED_N = (1, 40)                          # numbers of steps drawn (high excluded)
+SEEDED_DIGITS = (1e-9, 1e-15)               # relative and absolute: one step against its formula
+STIFF_LONG = (0.0, 3.0)                     # the interval of the test of Euler's factor
+STABILITY_SPAN = (0.0, 10.0)                # the interval of the stability test, steps h = 1
+NONLINEAR_SPAN = (0.0, 5.0)                 # y' = -y^3 from y(0) = 2
+NEWTON_MARGIN = 10                          # a residual within this many NEWTON_TOLERANCE
+GROWING_RATE = 10.0                         # y' = 10 y: backward Euler at h lambda = 1 and 2
+TOO_MANY_BACKWARD = ((0.0, 20.0), 1e-4)     # 200 000 steps: above BACKWARD_MAX_STEPS
+OVERFLOW_SPAN = (0.0, 1000.0)               # y' = y with h = 0.5: the values double and overflow
+
+
+def cosine_rate(t, y):
+    return y * np.cos(t)                    # y' = y cos t
+
+
+def cosine_exact(t):
+    return np.exp(np.sin(t))
+
+
+def spring_rate(t, u):
+    return np.array([u[1], -SPRING_RATE * u[0]])          # x' = v, v' = -4x
+
+
+def spring_exact(t):
+    root = np.sqrt(SPRING_RATE)
+    return np.array([np.cos(root * t), -root * np.sin(root * t)])
+
+
+def stiff_rate(t, y):
+    return -STIFF_RATE * (y - np.sin(t))
+
+
+def stiff_exact(t):
+    # y = A e^(-100 t) + (100^2 sin t - 100 cos t) / (100^2 + 1), with y(0) = 1
+    slow = (STIFF_RATE ** 2 * np.sin(t) - STIFF_RATE * np.cos(t)) / (STIFF_RATE ** 2 + 1)
+    return (1 + STIFF_RATE / (STIFF_RATE ** 2 + 1)) * np.exp(-STIFF_RATE * t) + slow
+
+
+def lebl_rate(x, y):
+    return y ** 2 / 3                       # Lebl, Section 1.7: y' = y^2 / 3, y(0) = 1, y = 3 / (3 - x)
+
+
+def test_global_error_reproduces_lebl_table_1_7_1():
+    sizes, errors = ol.global_error(ol.euler, lebl_rate, (0.0, 2.0), 1.0, lambda x: 3 / (3 - x), TABLE_STEPS)
+    assert sizes == pytest.approx([2.0 / n for n in TABLE_STEPS])
+    assert errors == pytest.approx(TABLE_1_7_1_ERRORS, abs=TABLE_DECIMALS)
+    assert errors[1:] / errors[:-1] == pytest.approx(TABLE_1_7_1_RATIOS, abs=TABLE_DECIMALS)
+
+
+def test_global_error_lebl_exercise_1_7_7():
+    # x' = 2t, x(0) = 0: Euler gives 0, 8, 12 at t = 4 with h = 4, 2, 1; printed errors 16, 8, 4
+    steps, printed = EXERCISE_1_7_7
+    sizes, errors = ol.global_error(ol.euler, lambda t, x: 2 * t, (0.0, 4.0), 0.0, lambda t: t ** 2, steps)
+    assert list(sizes) == [4.0, 2.0, 1.0] and list(errors) == list(printed)
+    assert list(ol.observed_order(errors)) == [1.0, 1.0]           # the factors 0.5, 0.5 of the book
+
+
+def test_local_error_numbers_of_the_notebook():
+    errors = [ol.local_error(ol.euler, cosine_rate, 0.0, COSINE_START, h, cosine_exact) for h in LOCAL_STEPS]
+    assert errors == pytest.approx(LOCAL_EULER, rel=PRINTED_DIGITS)
+    assert errors[0] == pytest.approx(cosine_exact(LOCAL_STEPS[0]) - (1 + LOCAL_STEPS[0]))     # 1.21978 - 1.2
+
+
+@pytest.mark.parametrize(("method", "order"), [(ol.euler, 1), (ol.heun, 2), (ol.rk4, 4)])
+def test_local_and_global_orders_of_the_three_methods(method, order):
+    local = [ol.local_error(method, cosine_rate, 0.0, COSINE_START, h, cosine_exact) for h in LOCAL_STEPS]
+    assert ol.observed_order(local)[-1] == pytest.approx(order + 1, abs=ORDER_DIGITS)
+    _, errors = ol.global_error(method, cosine_rate, COSINE_SPAN, COSINE_START, cosine_exact, GLOBAL_STEPS)
+    assert ol.observed_order(errors)[-1] == pytest.approx(order, abs=ORDER_DIGITS)
+
+
+def test_global_error_numbers_of_the_notebook():
+    _, errors = ol.global_error(ol.euler, cosine_rate, COSINE_SPAN, COSINE_START, cosine_exact,
+                                GLOBAL_STEPS)
+    assert errors == pytest.approx(GLOBAL_EULER, rel=PRINTED_DIGITS)
+
+
+@pytest.mark.parametrize("name", sorted(SPRING_ERRORS))
+def test_global_error_on_the_spring_as_a_system(name):
+    # the error of x alone (component 0) at T = 5, as in the notebook; the largest component is never smaller
+    method = getattr(ol, name)
+    sizes, errors = ol.global_error(method, spring_rate, (0.0, SPRING_END), [1.0, 0.0], spring_exact,
+                                    SPRING_STEPS, component=0)
+    first, last = SPRING_ERRORS[name]
+    assert errors[0] == pytest.approx(first, rel=PRINTED_DIGITS)
+    assert errors[-1] == pytest.approx(last, rel=PRINTED_DIGITS)
+    _, largest = ol.global_error(method, spring_rate, (0.0, SPRING_END), [1.0, 0.0], spring_exact,
+                                 SPRING_STEPS)
+    assert np.all(largest >= errors)
+    _, second = ol.global_error(method, spring_rate, (0.0, SPRING_END), [1.0, 0.0], spring_exact,
+                                SPRING_STEPS, component=1)
+    assert largest == pytest.approx(np.maximum(errors, second))     # the largest component, not a sum
+    assert sizes == pytest.approx([SPRING_END / n for n in SPRING_STEPS])
+
+
+def test_euler_amplitude_on_the_spring_grows_as_the_notebook_says():
+    h = SPRING_PERIODS / SPRING_PERIOD_STEPS
+    _, values = ol.euler(spring_rate, (0.0, SPRING_PERIODS), [1.0, 0.0], h)
+    amplitude = np.hypot(values[-1, 0], values[-1, 1] / np.sqrt(SPRING_RATE))
+    factor = (1 + SPRING_RATE * h ** 2) ** (SPRING_PERIOD_STEPS / 2)    # sqrt(1 + 4h^2) at each step
+    assert amplitude == pytest.approx(factor, rel=CLOSED_FORM)
+    assert amplitude == pytest.approx(SPRING_AMPLITUDE[0], abs=SPRING_AMPLITUDE[1])
+
+
+def test_local_and_global_error_of_a_system_take_the_largest_component():
+    h = SPRING_END / SPRING_STEPS[0]
+    one_step = ol.euler(spring_rate, (0.0, h), [1.0, 0.0], h)[1][-1]
+    expected = np.abs(one_step - spring_exact(h))
+    largest = ol.local_error(ol.euler, spring_rate, 0.0, [1.0, 0.0], h, spring_exact)
+    assert largest == pytest.approx(expected.max())
+    for j in (0, 1):
+        assert ol.local_error(ol.euler, spring_rate, 0.0, [1.0, 0.0], h, spring_exact,
+                              component=j) == pytest.approx(expected[j])
+
+
+def test_global_error_accepts_a_method_written_by_a_student():
+    def midpoint(f, t_span, y0, h):
+        t = np.arange(t_span[0], t_span[1] + h / 2, h)
+        y = [float(y0)]
+        for t_now in t[:-1]:
+            k1 = f(t_now, y[-1])
+            y.append(y[-1] + h * f(t_now + h / 2, y[-1] + h / 2 * k1))
+        return t, np.array(y)
+
+    _, errors = ol.global_error(midpoint, cosine_rate, COSINE_SPAN, COSINE_START, cosine_exact,
+                                GLOBAL_STEPS)
+    assert ol.observed_order(errors)[-1] == pytest.approx(2, abs=ORDER_DIGITS)
+    local = [ol.local_error(midpoint, cosine_rate, 0.0, COSINE_START, h, cosine_exact) for h in LOCAL_STEPS]
+    assert ol.observed_order(local)[-1] == pytest.approx(3, abs=ORDER_DIGITS)
+
+
+@pytest.mark.parametrize(("h", "factor"), STIFF_STEPS)
+def test_euler_factor_on_the_stiff_equation(h, factor):
+    # the gap y - (slow part) is multiplied by 1 - 100 h at each Euler step (the notebook's predictions)
+    assert 1 - STIFF_RATE * h == pytest.approx(factor)
+    stable = abs(factor) < 1
+    _, values = ol.euler(stiff_rate, STIFF_LONG, 1.0, h)
+    assert (np.max(np.abs(values - stiff_exact(np.arange(values.size) * h))) < 1) == stable
+
+
+@pytest.mark.parametrize("h", BACKWARD_H)
+def test_backward_euler_against_its_closed_form_on_the_stiff_equation(h):
+    # linear: y_(n+1) = (y_n + 100 h sin t_(n+1)) / (1 + 100 h), the formula of the notebook
+    t, values = ol.backward_euler(stiff_rate, (0.0, BACKWARD_END), 1.0, h)
+    expected = [1.0]
+    for t_next in t[1:]:
+        expected.append((expected[-1] + STIFF_RATE * h * np.sin(t_next)) / (1 + STIFF_RATE * h))
+    assert values == pytest.approx(expected, rel=CLOSED_FORM)
+    given = ol.backward_euler(stiff_rate, (0.0, BACKWARD_END), 1.0, h, jacobian=lambda t, y: -STIFF_RATE)[1]
+    assert given == pytest.approx(expected, rel=CLOSED_FORM)
+
+
+def test_backward_euler_has_order_one():
+    errors = [abs(ol.backward_euler(cosine_rate, COSINE_SPAN, COSINE_START, COSINE_END / n)[1][-1]
+                  - cosine_exact(COSINE_END)) for n in GLOBAL_STEPS]
+    assert ol.observed_order(errors)[-1] == pytest.approx(1, abs=ORDER_DIGITS)
+
+
+@pytest.mark.parametrize("product", LARGE_PRODUCTS)
+def test_backward_euler_is_stable_for_every_step(product):
+    # y' = lambda y with lambda h very negative: the values decay, never change sign; Euler's grow
+    rate, h = product, 1.0
+    t, values = ol.backward_euler(lambda t, y: rate * y, STABILITY_SPAN, 1.0, h)
+    assert np.all(values > 0) and np.all(np.diff(values) < 0)
+    assert values == pytest.approx((1 / (1 - product)) ** np.arange(t.size), rel=CLOSED_FORM)
+    euler_values = ol.euler(lambda t, y: rate * y, STABILITY_SPAN, 1.0, h)[1]
+    assert np.all(np.abs(euler_values[1:]) > 1) and np.all(np.diff(np.abs(euler_values)) > 0)
+
+
+def test_backward_euler_returns_the_shapes_of_euler():
+    t, values = ol.backward_euler(spring_rate, (0.0, 1.0), [1.0, 0.0], 0.1)
+    t_euler, values_euler = ol.euler(spring_rate, (0.0, 1.0), [1.0, 0.0], 0.1)
+    assert values.shape == values_euler.shape == (11, 2) and np.array_equal(t, t_euler)
+    assert ol.backward_euler(stiff_rate, (0.0, 1.0), 1.0, 0.1)[1].shape == (11,)
+
+
+def test_backward_euler_on_a_nonlinear_equation_solves_each_step():
+    # y' = -y^3 (not linear): each value must satisfy its own equation Y = y_n + h f(t, Y)
+    h = 0.5
+    t, values = ol.backward_euler(lambda t, y: -y ** 3, NONLINEAR_SPAN, 2.0, h)
+    residuals = values[1:] - values[:-1] - h * (-values[1:] ** 3)
+    assert np.max(np.abs(residuals)) < ol.NEWTON_TOLERANCE * NEWTON_MARGIN
+
+
+def test_backward_euler_on_a_growing_solution_as_the_docstring_says():
+    # lambda > 0: h lambda = 1 cannot be solved; h lambda = 2 gives 1, -1, 1, ... (the solution grows)
+    with pytest.raises(ValueError, match="cannot be solved"):
+        ol.backward_euler(lambda t, y: GROWING_RATE * y, (0.0, 1.0), 1.0, 1 / GROWING_RATE,
+                          jacobian=lambda t, y: GROWING_RATE)
+    with pytest.raises(ValueError, match="backward Euler"):
+        ol.backward_euler(lambda t, y: GROWING_RATE * y, (0.0, 1.0), 1.0, 1 / GROWING_RATE)
+    values = ol.backward_euler(lambda t, y: GROWING_RATE * y, (0.0, 1.0), 1.0, 2 / GROWING_RATE)[1]
+    assert values == pytest.approx((-1.0) ** np.arange(values.size))
+
+
+def test_an_error_inside_the_jacobian_is_its_own_message():
+    def broken(t, y):
+        return 1 / 0
+
+    with pytest.raises(ZeroDivisionError):
+        ol.backward_euler(stiff_rate, (0.0, 1.0), 1.0, 0.1, jacobian=broken)
+
+
+def test_embedded_step_numbers_and_shapes():
+    value, estimate = ol.embedded_step(cosine_rate, 0.0, COSINE_START, LOCAL_STEPS[0])
+    h = LOCAL_STEPS[0]
+    k1, k2 = 1.0, (1 + h) * np.cos(h)
+    assert isinstance(value, float) and value == pytest.approx(1 + h * (k1 + k2) / 2)
+    assert estimate == pytest.approx(h / 2 * abs(k2 - k1))
+    pair, pair_estimate = ol.embedded_step(spring_rate, 0.0, [1.0, 0.0], 0.1)
+    heun_value = ol.heun(spring_rate, (0.0, 0.1), [1.0, 0.0], 0.1)[1][-1]
+    assert pair.shape == (2,) and pair == pytest.approx(heun_value)
+    assert pair_estimate == pytest.approx(np.max(np.abs(pair - ol.euler(spring_rate, (0.0, 0.1), [1.0, 0.0],
+                                                                        0.1)[1][-1])))
+
+
+@pytest.mark.parametrize(("h", "share"), tuple(zip(EMBEDDED_H, EMBEDDED_SHARE, strict=True)))
+def test_embedded_estimate_against_the_true_local_error_of_euler(h, share):
+    _, estimate = ol.embedded_step(cosine_rate, 0.0, COSINE_START, h)
+    true = ol.local_error(ol.euler, cosine_rate, 0.0, COSINE_START, h, cosine_exact)
+    assert abs(estimate / true - 1) < share
+
+
+def test_seeded_linear_equations():
+    # y' = lambda y: one Euler step errs by |y0 (e^(lambda h) - 1 - lambda h)|; backward Euler is
+    # y0 / (1 - lambda h)^n; the embedded estimate is |y0| h^2 lambda^2 / 2
+    rng = np.random.default_rng(SEED)
+    for _ in range(SEEDED_CASES):
+        rate, start = rng.uniform(*SEEDED_RATES), rng.uniform(*SEEDED_STARTS)
+        n = int(rng.integers(*SEEDED_N))
+        h = 1.0 / n
+
+        def f(t, y, rate=rate):
+            return rate * y
+
+        def exact(t, rate=rate, start=start):
+            return start * np.exp(rate * t)
+
+        one = ol.local_error(ol.euler, f, 0.0, start, h, exact)
+        assert one == pytest.approx(abs(start * (np.exp(rate * h) - 1 - rate * h)), rel=SEEDED_DIGITS[0],
+                                    abs=SEEDED_DIGITS[1])
+        values = ol.backward_euler(f, (0.0, 1.0), start, h)[1]
+        assert values == pytest.approx(start / (1 - rate * h) ** np.arange(n + 1), rel=CLOSED_FORM)
+        assert ol.embedded_step(f, 0.0, start, h)[1] == pytest.approx(abs(start) * (rate * h) ** 2 / 2)
+
+
+def euler_local(y0, h=0.1):
+    return ol.local_error(ol.euler, cosine_rate, 0.0, y0, h, cosine_exact)
+
+
+def euler_global(t_span, y0, steps):
+    return ol.global_error(ol.euler, cosine_rate, t_span, y0, cosine_exact, steps)
+
+
+@pytest.mark.parametrize(("call", "words"), [
+    (lambda: ol.local_error("euler", cosine_rate, 0.0, 1.0, 0.1, cosine_exact), "method must be a function"),
+    (lambda: ol.local_error(ol.euler, None, 0.0, 1.0, 0.1, cosine_exact), "f must be a function"),
+    (lambda: ol.local_error(ol.euler, cosine_rate, 0.0, 1.0, 0.1, 2.0), "exact must be a function"),
+    (lambda: ol.local_error(ol.euler, cosine_rate, "0", 1.0, 0.1, cosine_exact), "t0 must be one finite"),
+    (lambda: ol.local_error(ol.euler, cosine_rate, 0.0, 1.0, 0.0, cosine_exact), "h must be a positive"),
+    (lambda: ol.local_error(ol.euler, cosine_rate, 0.0, 1.0, -0.1, cosine_exact), "h must be a positive"),
+    (lambda: euler_local(1.0, h=None), "h must be one finite real number"),
+    (lambda: euler_local(1.0, h=[0.1]), "h must be one finite real number"),
+    (lambda: euler_local(1.0, h="0.1"), "h must be one finite real number"),
+    (lambda: euler_local(1.0, h=True), "h must be one finite real number"),
+    (lambda: euler_local(2.0), "y0 must be the exact value"),
+    (lambda: euler_local(None), "y0 must be a finite real"),
+    (lambda: euler_local([[1.0]]), "y0 must be a finite real"),
+    (lambda: euler_local(np.nan), "y0 must be a finite real"),
+    (lambda: ol.local_error(ol.euler, cosine_rate, 0.0, 1.0, 0.1, lambda t: [1.0, 2.0]),
+     "exact\\(t\\) must return 1 finite number"),
+    (lambda: ol.local_error(ol.euler, spring_rate, 0.0, [1.0, 0.0], 0.1, spring_exact, component=2),
+     "component must be None or a whole number from 0 to 1"),
+    (lambda: ol.local_error(ol.euler, spring_rate, 0.0, [1.0, 0.0], 0.1, spring_exact, component=True),
+     "component must be None"),
+    (lambda: ol.local_error(lambda f, t_span, y0, h: 3.0, cosine_rate, 0.0, 1.0, 0.1, cosine_exact),
+     "method must be called as method\\(f, t_span, y0, h\\)"),
+    (lambda: euler_global((1.0, 0.0), 1.0, [10]), "t_span must be two"),
+    (lambda: euler_global(4.0, 1.0, [10]), "t_span must be two"),
+    (lambda: euler_global((0.0, 4.0, 5.0), 1.0, [10]),
+     "t_span must be two"),
+    (lambda: euler_global((0.0, np.inf), 1.0, [10]), "t1 must be one"),
+    (lambda: euler_global((0.0, 4.0), 1.0, []), "steps must be a list"),
+    (lambda: euler_global((0.0, 4.0), 1.0, [10.0]), "steps must be a list"),
+    (lambda: euler_global((0.0, 4.0), 1.0, [0, 10]), "steps must be a list"),
+    (lambda: euler_global((0.0, 4.0), 1.0, 10), "steps must be a list"),
+    (lambda: euler_global((0.0, 4.0), 1.0, [True]), "steps must be a list"),
+    (lambda: euler_global((0.0, 4.0), 1.0, [10 ** 7]),
+     "steps must be a list"),
+    (lambda: euler_global((0.0, 4.0), 0.0, [10]), "y0 must be the exact"),
+    (lambda: ol.backward_euler("f", (0.0, 1.0), 1.0, 0.1), "f must be a function of t and y"),
+    (lambda: ol.backward_euler(stiff_rate, (0.0, 1.0), 1.0, 0.1, jacobian=3.0), "jacobian must be None or"),
+    (lambda: ol.backward_euler(stiff_rate, (0.0, 1.0), 1.0, 0.3), "must be a positive integer"),
+    (lambda: ol.backward_euler(stiff_rate, (1.0, 0.0), 1.0, 0.1), "t0 < t1"),
+    (lambda: ol.backward_euler(stiff_rate, (0.0, 1.0), 1.0, -0.1), "h must be a positive"),
+    (lambda: ol.backward_euler(stiff_rate, (0.0, 1.0), "1", 0.1), "y0 must be a finite real"),
+    (lambda: ol.backward_euler(lambda t, y: [y[0], y[0]], (0.0, 1.0), 1.0, 0.1),
+     "f\\(t, y\\) must return 1 number\\(s\\), one for each unknown"),
+    (lambda: ol.backward_euler(lambda t, y: np.log(y - 2), (0.0, 1.0), 1.0, 0.1),
+     "f\\(t, y\\) is not a finite number at t = 0"),
+    (lambda: ol.backward_euler(stiff_rate, (0.0, 1.0), 1.0, 0.1, jacobian=lambda t, y: [1.0, 2.0]),
+     "jacobian\\(t, y\\) must return 1 x 1 finite number"),
+    (lambda: ol.backward_euler(lambda t, y: -y, (0.0, 1.0), 1.0, 1.0, jacobian=lambda t, y: 3.0),  # a wrong J
+     "Newton's method did not converge in the step to t = 1"),
+    (lambda: ol.backward_euler(lambda t, y: y, (0.0, 1.0), 1.0, 1.0, jacobian=lambda t, y: 1.0),
+     "cannot be solved"),
+    (lambda: ol.backward_euler(lambda t, y: y, OVERFLOW_SPAN, 1.0, 0.5), "too large for the computer"),
+    (lambda: ol.backward_euler(stiff_rate, TOO_MANY_BACKWARD[0], 1.0, TOO_MANY_BACKWARD[1]),
+     "the limit of backward_euler is 100000"),
+    (lambda: ol.embedded_step("f", 0.0, 1.0, 0.1), "f must be a function of t and y"),
+    (lambda: ol.embedded_step(cosine_rate, None, 1.0, 0.1), "t must be one finite real number"),
+    (lambda: ol.embedded_step(cosine_rate, 0.0, 1.0, 0.0), "h must be a positive"),
+    (lambda: ol.embedded_step(cosine_rate, 0.0, 1.0, None), "h must be one finite real number"),
+    (lambda: ol.embedded_step(cosine_rate, 0.0, 1.0, [0.1]), "h must be one finite real number"),
+    (lambda: ol.embedded_step(cosine_rate, 0.0, [], 0.1), "y must be a finite real"),
+    (lambda: ol.embedded_step(lambda t, y: np.inf, 0.0, 1.0, 0.1), "is not a finite number at t = 0"),
+])
+def test_numerical_methods_part_2_refuse_bad_input(call, words):
+    with pytest.raises(ValueError, match=words):
+        call()
+
+
+def test_numerical_methods_part_2_leave_warnings_and_numpy_settings_alone():
+    filters, settings = list(warnings.filters), np.geterr()
+    ol.backward_euler(stiff_rate, (0.0, 1.0), 1.0, 0.1)
+    with pytest.raises(ValueError):
+        ol.backward_euler(lambda t, y: np.log(y - 2), (0.0, 1.0), 1.0, 0.1)
+    ol.global_error(ol.rk4, spring_rate, (0.0, SPRING_END), [1.0, 0.0], spring_exact, SPRING_STEPS[:2])
+    ol.embedded_step(cosine_rate, 0.0, 1.0, 0.1)
+    assert list(warnings.filters) == filters and np.geterr() == settings
+    assert ol.SETUP_NAMES == ("np", "sp", "plt", "ol", "solve_ivp", "interact", "FloatSlider", "IntSlider")
+    assert (ol.NEWTON_TOLERANCE, ol.NEWTON_MAX_ITERATIONS, ol.BACKWARD_MAX_STEPS) == (1e-10, 50, 100_000)

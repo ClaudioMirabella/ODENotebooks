@@ -36,7 +36,7 @@ notebooks and `odelib.py` (an allow-list: nothing else of the repository can rea
 site); (3) downloads, once, the Python runtime (Pyodide 314.0.6) and the 29 packages the notebooks
 need, checking each file against its published SHA-256; (4) builds JupyterLite; (5) makes the site
 self-contained (runtime and packages served by the site, fall-back to PyPI switched off);
-(6) writes the home page. Result: about 137 MB of static files (26 notebooks, 2026-11-24).
+(6) writes the home page. Result: about 137 MB of static files (27 notebooks, 2026-11-25).
 
 Stop `serve_site.py` before rebuilding: on Windows a running server (or a terminal whose current
 folder is `_output`) keeps the folder locked, and the script says so.
@@ -111,6 +111,7 @@ All cells run, without errors, using only files of the site:
 | 19 The Laplace transform (2026-11-23) | 21 | 8 | 2 |
 | 20 Steps, impulses, and convolution (2026-11-24) | 24 | 12 | 2 |
 | 21 Series solutions (2026-11-24) | 26 | 8 | 2 |
+| 22 Numerical methods, part 2 (2026-11-25) | 29 | 8 | 2 |
 
 Moving a slider from the keyboard redraws its plot (notebooks 04 and 08 to 13). Notebook 08 is listed
 first on the home page ("Start here if you are new to Python"); its answers block is collapsed. The server log shows every Python
@@ -137,6 +138,6 @@ For Chrome, Edge, Firefox and Safari; a Windows laptop, a Mac, a Chromebook, a t
 Every notebook is opened in a fresh browser profile (a first visit), all cells are run by the
 Python in the browser, and the check fails if a cell stops with an error, if a notebook does not
 finish, or if the page asks another host for a file. It drives a browser already installed
-(Edge or Chrome): nothing is downloaded. Last run (2026-11-24): 26 of 26 notebooks (the 00 guide,
-01-21 and the four optional E notebooks), 13-24 s each, about 7 min in all.
+(Edge or Chrome): nothing is downloaded. Last run (2026-11-25): 27 of 27 notebooks (the 00 guide,
+01-22 and the four optional E notebooks), 12-21 s each, about 7 min in all.
 Run it after every build.
