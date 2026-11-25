@@ -498,9 +498,11 @@ where $d$ is the distance from $x_0$ to the nearest zero of $P$, **complex zeros
 **Why complex points matter.** The partial sums are polynomials, which can be computed at a complex $x$
 too. A power series in fact converges for every complex $x$ with $|x - x_0| < \rho$: inside a disk of
 the complex plane, whose trace on the real line is the interval $x_0 - \rho < x < x_0 + \rho$. The disk
-cannot contain a point where the solution blows up (inside the disk the series adds up to a finite
-number), and a zero of $P$ can be such a point: so the real
-interval is cut although nothing happens on the real line.
+cannot contain a point where the solution or one of its derivatives blows up (inside the disk the series
+and every derivative add up to finite numbers), and a zero of $P$ can be such a point. So the real
+interval **may** be cut at the distance $d$ although nothing happens on the real line; it is not always
+cut there. The equation below has the solution $y = 1$ too (with $y(0) = 1$, $y'(0) = 0$): a series that
+stops, and works for every $x$. This is why the rule says "at least".
 
 **The notebook's example:** $(1 + x^2)y'' + 2xy' = 0$, $y(0) = 0$, $y'(0) = 1$, solved by
 $y = \arctan x$ (then $(1 + x^2)y' = 1$; differentiate). $\arctan x$ is smooth on the real line, but
